@@ -1,0 +1,30 @@
+{
+    "name": "basic",
+    "version": "0.1.0",
+    "modules": {
+        "module_0": {
+            "root_source_file": "src/module_0/main.zig",
+            "imports": ["build_options"]
+        }
+    },
+    "executables": {
+        "exe_0": {
+            "root_module": {
+                "root_source_file": "src/module_0/main.zig",
+                "imports": ["build_options"]
+            }
+        }
+    },
+    "options_modules": {
+        "build_options": {
+            "min_depth": {
+                "type": "usize",
+                "default": 0
+            },
+            "max_depth": {
+                "type": "usize",
+                "default": 100
+            }
+        }
+    }
+}

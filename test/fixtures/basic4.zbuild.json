@@ -1,0 +1,20 @@
+{
+    "name": "basic",
+    "version": "0.1.0",
+    "executables": {
+        "module_0": {
+            "root_module": {
+                "name": "module_0_exe",
+                "root_source_file": "src/module_0/main.zig"
+            }
+        }
+    },
+    "libraries": {
+        "module_0": {
+            "root_module": {
+                "name": "module_0_lib",
+                "root_source_file": "src/module_0/main.zig"
+            }
+        }
+    }
+}
