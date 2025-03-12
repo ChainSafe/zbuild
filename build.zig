@@ -77,14 +77,6 @@ pub fn build(b: *std.Build) void {
     run_tls_fmt_all.dependOn(&fmt_all.step);
     run_tls_fmt.dependOn(&fmt_all.step);
 
-    const run_my_run = b.addSystemCommand(&.{"src/main.zig"});
-    const run_tls_my_run = b.step("run:my_run", "Run the my_run run");
-    run_tls_my_run.dependOn(&run_my_run.step);
-
-    const run_my_run2 = b.addSystemCommand(&.{"src/main.zig"});
-    const run_tls_my_run2 = b.step("run:my_run2", "Run the my_run2 run");
-    run_tls_my_run2.dependOn(&run_my_run2.step);
-
     module_generate.addImport("zbuild", b.modules.get("zbuild") orelse @panic("missing import zbuild"));
 
 }

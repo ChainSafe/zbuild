@@ -13,6 +13,7 @@ const test_cases = &[_][]const u8{
     "fixtures/basic3.zbuild.json",
     "fixtures/basic4.zbuild.json",
     "fixtures/basic5.zbuild.json",
+    "fixtures/basic6.zbuild.json",
 };
 
 fn maybeCleanup(should_cleanup: bool) void {

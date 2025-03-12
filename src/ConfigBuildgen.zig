@@ -530,12 +530,17 @@ pub fn writeFmt(self: *ConfigBuildgen, name: []const u8, item: Config.Fmt) !void
 }
 
 pub fn writeRun(self: *ConfigBuildgen, name: []const u8, item: Config.Run) !void {
+    const Args = @import("Args.zig");
+
+    const args = try Args.parse(self.allocator, item);
+    defer args.deinit();
+
     try self.writeLn(
-        \\const run_{s} = b.addSystemCommand(&.{{"{s}"}});
+        \\const run_{s} = b.addSystemCommand({s});
         \\const run_tls_{s} = b.step("run:{s}", "Run the {s} run");
         \\run_tls_{s}.dependOn(&run_{s}.step);
     ,
-        .{ name, item, name, name, name, name, name },
+        .{ name, (try strSliceLiteral(args.args.items)).?, name, name, name, name, name },
         .{},
     );
 }
