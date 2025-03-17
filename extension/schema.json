@@ -26,6 +26,21 @@
             "description": "Keywords associated with the project",
             "default": null
         },
+        "fingerprint": {
+            "type": "string",
+            "description": "A unique fingerprint for the project (e.g., '0x60f98ac2bf5a915c')"
+        },
+        "minimum_zig_version": {
+            "type": "string",
+            "description": "The minimum Zig version required (e.g., '0.14.0')"
+        },
+        "paths": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "description": "Paths included in the project for dependency hashing"
+        },
         "dependencies": {
             "type": "object",
             "additionalProperties": {
@@ -107,7 +122,7 @@
             "default": null
         }
     },
-    "required": ["name", "version"],
+    "required": ["name", "version", "fingerprint", "minimum_zig_version"],
     "$defs": {
         "dependency": {
             "oneOf": [

@@ -8,17 +8,17 @@
 - [x] robust generate cli command
   - write build.zig.zon
   - read file / write directory flags
+- [x] add init command
+- [x] add fetch command
 
 - add named lazy paths to Config
 - add named write files to Config
 - add fuzz to Config
 - add additional module options, eg. addIncludePath
+- conditionals? template strings?
 - implement depends_on and test_runner
 - refresh json schema
 
 - lots of tests
 
 - make json parsing errors friendly
-
-- add init command
-- add fetch command

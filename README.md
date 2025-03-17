@@ -4,51 +4,77 @@ An opinionated build tool for Zig projects.
 
 ## Introduction
 
-`zbuild` is a command-line build tool designed to simplify and enhance the build process for Zig projects. It allows you to define your project's build configuration in a `zbuild.json` file, which `zbuild` uses to generate a corresponding `build.zig` file compatible with the Zig build system. This approach provides a structured, configuration-driven alternative to writing Zig build scripts manually, making it easier to manage dependencies, executables, libraries, and other build artifacts.
+`zbuild` is a command-line build tool designed to simplify and enhance the build process for Zig projects. It leverages a JSON-based configuration file (`zbuild.json`) to define project builds declaratively, generating a corresponding `build.zig` and `build.zig.zon` file that integrates seamlessly with Zig’s native build system. This approach reduces the complexity of writing and maintaining Zig build scripts manually, offering a structured alternative for managing dependencies, modules, executables, libraries, tests, and more.
 
-Note: `zbuild` is currently under development. Some features are incomplete or subject to change. Check the `docs/TODO.md` file for planned enhancements.
+Note: `zbuild` is under active development. Some features are incomplete or subject to change. Check the `docs/TODO.md` file for planned enhancements.
 
 ## Features
 
 - **JSON-based Configuration**: Define your build in a `zbuild.json` file instead of writing Zig code directly.
-- **Automatic build.zig Generation**: Use the generate command to create a build.zig file from your configuration.
+- **Automatic build.zig Generation**: Create a `build.zig` and `build.zig.zon` file from your configuration.
 - **Comprehensive Build Support**: Manage dependencies, modules, executables, libraries, objects, tests, formatting, and run commands.
 - **Command-Line Interface**: Execute common build tasks like compiling executables, running tests, and formatting code.
 - **IDE Support**: Includes a JSON schema (`extension/schema.json`) for validating `zbuild.json` in editors like VSCode.
 
 ## Installation
 
-TODO
+Currently, zbuild must be built from source:
+
+1. Clone the repository:
+```bash
+git clone https://github.com/chainsafe/zbuild.git
+cd zbuild
+```
+
+2. Build the executable:
+```bash
+zig build -Doptimize=ReleaseFast
+```
+
+3. (Optional) Install it globally:
+```bash
+zig build install --prefix ~/.local
+```
+
+A pre-built binary distribution is planned for future releases once sufficient feature-completeness is achieved.
 
 ## Usage
 
 `zbuild` provides a command-line interface with various commands to manage your Zig projects. Below is the general syntax and a list of available commands:
 
 ```
-Usage: zbuild [command] [options]
+Usage: zbuild [global_options] [command] [options]
 ```
 
 ### Commands
 
-- `init`: Initialize a Zig package in the current directory. (Not yet implemented)
-- `fetch`: Copy a package into the global cache. (Not yet implemented)
+- `init`: Initialize a new Zig project with a basic `zbuild.json`, `build.zig`, `build.zig.zon`, and `src/main.zig` in the current directory.
+- `fetch`: Copy a package into the global cache  and optionally add it to `zbuild.json` and `build.zig.zon`
 - `install`: Install all artifacts defined in `zbuild.json`.
 - `uninstall`: Uninstall all artifacts.
+- `sync`: Synchronize `build.zig` and `build.zig.zon` with `zbuild.json`.
+- `build`: Run `zig build` with the generated `build.zig`.
 - `build-exe <name>`: Build a specific executable defined in `zbuild.json`.
 - `build-lib <name>`: Build a specific library.
 - `build-obj <name>`: Build a specific object file.
-- `build-test <name>`: Build a test into an executable.
-- `run <name>`: Run an executable or a run script.
-- `test [name]`: Perform unit testing (optional name for specific test).
-- `fmt [name]`: Format source code (optional name for specific fmt target).
-- `build`: Run the standard `zig build` command with the generated `build.zig`.
-- `generate`: Create a `build.zig` file from `zbuild.json`.
+- `build-test <name>`: Build a specific test into an executable.
+- `run <name>`: Run an executable or a custom run script.
+- `test [name]`: Run all tests or a specific test.
+- `fmt [name]`: Format code for all or a specific formatting target.
 - `help`: Print the help message and exit.
 - `version`: Print the version number and exit.
 
-General Options
+### Global Options
+
+- `--project-dir <path>`: Set the project directory (default: `.`).
+- `--zbuild-file <path>`: Specify the configuration file (default: `zbuild.json`).
+- `--no-sync`: Skip automatic synchronization of `build.zig` and `build.zig.zon`.
+
+### General Options
 
 - `-h, --help`: Print command-specific usage.
+
+For command-specific options (e.g., `fetch`), use zbuild <command> --help.
 
 ## Configuration
 
@@ -59,6 +85,8 @@ The `zbuild.json` file is the heart of the zbuild system. It defines your projec
   "name": "example_project",
   "version": "1.2.3",
   "description": "A comprehensive example",
+  "fingerprint": "0x90797553773ca567",
+  "minimum_zig_version": "0.14.0",
   "keywords": ["example"],
   "dependencies": {
     "mathlib": {
@@ -127,14 +155,15 @@ The `zbuild.json` file is the heart of the zbuild system. It defines your projec
 
 ### Key Sections
 
-- **Project Metadata**: Defines the project's identity and purpose.
-- **Dependencies**: Manages external libraries or packages.
-- **Modules**: Organizes reusable code units.
-- **Executables**: Specifies buildable programs.
-- **Libraries**: Configures libraries for reuse or sharing.
-- **Tests**: Sets up testing configurations.
-- **Fmts**: Controls code formatting rules.
-- **Runs**: Provides custom commands for project tasks.
+- `name`, `version`, `fingerprint`, `minimum_zig_version`: Project metadata (required).
+- `paths`: Files/directories included in dependency hashing (optional, defaults to `["build.zig", "build.zig.zon", "src"]`).
+- `dependencies`: External packages (path or URL).
+- `options_modules`: Configurable build options bundled into modules.
+- `modules`: Reusable code units with optional imports and build settings.
+- `executables`, `libraries`, `objects`: Build targets with root modules.
+- `tests`: Test targets with optional filters.
+- `fmts`: Code formatting rules.
+- `runs`: Custom shell commands.
 
 For a full list of configuration options, refer to the schema.json (`extension/schema.json`) file, which provides detailed validation rules for zbuild.json. This schema can be used in editors like VSCode for autocompletion and error checking.
 
@@ -142,64 +171,74 @@ For a full list of configuration options, refer to the schema.json (`extension/s
 
 Here’s a step-by-step example to create and build a simple Zig project with zbuild:
 
-- Create a Project Directory:
+1. Initialize the project:
 
 ```bash
 mkdir myproject
 cd myproject
-```
-
-- Initialize the project:
-
-```bash
 zbuild init
 ```
 
-- Add an executable to `zbuild.json`
+2. (Optional) Inspect `zbuild.json`
 
 ```json
 {
   "name": "myproject",
-  "version": "1.0.0",
+  "version": "0.1.0",
+  "fingerprint": "0x<generated>",
+  "minimum_zig_version": "<zig-version>",
+  "paths": ["build.zig", "build.zig.zon", "src"],
   "executables": {
-    "hello": {
-      "root_module": {
-        "root_source_file": "src/main.zig"
-      }
+    "myproject": {
+      "root_module": { "root_source_file": "src/main.zig" }
     }
   }
 }
 ```
 
-- Edit a Source File:
-
-Edit `src/main.zig` with a simple program:
-
+3. Update `src/main.zig`
 ```zig
 const std = @import("std");
-
 pub fn main() !void {
-    std.debug.print("Hello, zbuild!\n", .{});
+    const allocator = std.heap.page_allocator;
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
+
+    const arg = if (args.len >= 2) args[1] else "zbuild";
+    std.debug.print("Hello {s}!\n", .{arg});
+}
+
+4. (Optional) Build the Executable:
+
+```bash
+zbuild build-exe myproject
+```
+This builds the `myproject` executable into `zig-out/bin`.
+
+5. Run the Executable:
+
+```bash
+zbuild run myproject -- world
+```
+
+Outputs: `Hello, world!`
+
+## Fetching Dependencies
+
+Add a dependency to your project:
+```bash
+zbuild fetch --save=example https://github.com/example/repo/archive/v1.0.0.tar.gz
+```
+
+This updates `zbuild.json` with:
+```json
+"dependencies": {
+  "example": { "url": "https://github.com/example/repo/archive/v1.0.0.tar.gz" }
 }
 ```
 
-- The project can now be built/run/tested
+And synchronizes `build.zig.zon` with the fetched hash.
 
-- Build the Executable:
-
-```bash
-zbuild build-exe hello
-```
-
-This builds the `hello` executable into `zig-out/bin`.
-
-- Run the Executable:
-
-```bash
-zbuild run hello
-```
-
-Outputs: `Hello, zbuild!`
 
 ## Contributing
 

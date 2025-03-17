@@ -9,6 +9,9 @@ const Config = @This();
 
 name: []const u8,
 version: []const u8,
+fingerprint: []const u8,
+minimum_zig_version: []const u8,
+paths: ?[][]const u8 = null,
 description: ?[]const u8 = null,
 keywords: ?[][]const u8 = null,
 dependencies: ?ArrayHashMap(Dependency) = null,
@@ -279,6 +282,40 @@ pub const Fmt = struct {
 };
 
 pub const Run = []const u8;
+
+pub fn load(arena: std.mem.Allocator, zbuild_file: []const u8) !Config {
+    const config_bytes = try std.fs.cwd().readFileAlloc(arena, zbuild_file, 16_000);
+    return try std.json.parseFromSliceLeaky(Config, arena, config_bytes, .{});
+}
+
+pub fn save(config: Config, zbuild_file: []const u8) !void {
+    const file = try std.fs.cwd().createFile(zbuild_file, .{});
+    defer file.close();
+
+    const writer = file.writer();
+    try std.json.stringify(
+        config,
+        .{
+            .whitespace = .indent_2,
+            .emit_null_optional_fields = false,
+        },
+        writer,
+    );
+}
+
+pub fn addDependency(config: *Config, gpa: std.mem.Allocator, name: []const u8, dependency: Dependency) !void {
+    if (config.dependencies == null) {
+        config.dependencies = .{ .map = std.StringArrayHashMapUnmanaged(Dependency).empty };
+    }
+    try config.dependencies.?.map.put(gpa, name, dependency);
+}
+
+pub fn addExecutable(config: *Config, gpa: std.mem.Allocator, name: []const u8, executable: Executable) !void {
+    if (config.executables == null) {
+        config.executables = .{ .map = std.StringArrayHashMapUnmanaged(Executable).empty };
+    }
+    try config.executables.?.map.put(gpa, name, executable);
+}
 
 test "Config - json parsing" {
     const allocator = std.testing.allocator;

@@ -1,6 +1,8 @@
 {
   "name": "zbuild",
   "version": "0.1.0",
+  "fingerprint": "0x60f98ac2bf5a915c",
+  "minimum_zig_version": "0.14.0",
   "description": "An opionionated zig build tool",
   "executables": {
     "zbuild": {
@@ -10,16 +12,23 @@
     }
   },
   "tests": {
-    "generate": {
+    "sync": {
       "root_module": {
-        "root_source_file": "test/generate.zig",
-        "imports": ["zbuild"]
-      }
+        "private": true,
+        "root_source_file": "test/sync.zig",
+        "imports": [
+          "zbuild"
+        ]
+      },
+      "filters": []
     }
   },
   "fmts": {
     "all": {
-      "paths": ["src"]
+      "paths": [
+        "src"
+      ],
+      "check": false
     }
   }
 }

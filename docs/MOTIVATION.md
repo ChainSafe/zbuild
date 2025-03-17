@@ -86,6 +86,8 @@ You can define:
 {
   "name": "project",
   "version": "0.1.0",
+  "fingerprint": "0xdeadbeefdeadbeef",
+  "minimum_zig_version": "0.14.0",
   "executables": {
     "myapp": {
       "root_module": {
@@ -122,25 +124,27 @@ By providing an opinionated structure, zbuild encourages a consistent build work
 
 ## Trade-Offs
 Introducing `zbuild` comes with trade-offs:
-- **Opinionation**: The tool enforces a specific structure, which may not suit every project’s needs. Developers requiring full control may prefer raw build.zig.
-- **Additional Layer**: zbuild adds a dependency and an extra step (generating `build.zig`), which could introduce complexity in some workflows.
-- **Incomplete Features**: As an evolving project, `zbuild` lacks some planned features (e.g., `init`, `fetch`, `depends_on`), limiting its current scope.
+- **Opinionation**: The tool enforces a specific structure, which may not suit every project’s needs. Developers requiring full control may prefer raw `build.zig`.
+- **Maturity**: Incomplete features limit its scope, but the foundation is solid.
 
-Despite these trade-offs, the benefits of simplicity, consistency, and tooling support outweigh the drawbacks for many use cases.
+For many, the benefits—simplicity, consistency, and tooling—outweigh these drawbacks.
 
 ## Inspiration
-- **npm (Node.js)**: `package.json` provides a structured way to define scripts, dependencies, and metadata.
 `zbuild` draws inspiration from:
+- **npm (Node.js)**: `package.json` provides a structured way to define scripts, dependencies, and metadata.
 - **Cargo (Rust)**: A declarative Cargo.toml simplifies Rust project builds while retaining flexibility via `build.rs`.
 
-Unlike these tools, zbuild is tailored to Zig’s unique ecosystem, leveraging its native build system rather than replacing it.
+Unlike these tools, `zbuild` is tailored to Zig’s unique ecosystem, leveraging its native build system rather than replacing it.
 
 ## Future Vision
-The long-term vision for zbuild includes:
-- Full support for all Zig build features (e.g., custom steps, dependency fetching).
-- A robust init command to scaffold new projects.
-- Integration with Zig’s package manager for seamless dependency management.
-- A community-driven ecosystem of reusable zbuild.json templates.
+`zbuild` aspires to become an indispensable companion in the Zig ecosystem, evolving beyond its current foundation to empower developers at every level. Its high-level ambitions include:
 
-By addressing the pain points of Zig’s build system and offering a user-friendly alternative, zbuild aims to become a valuable tool in the Zig developer’s toolkit, enhancing productivity without compromising the language’s core principles.
+- **Democratizing Zig Development**: Lower the barrier to entry with an intuitive, welcoming build experience, empowering newcomers and seasoned developers alike to embrace Zig’s potential.
+- **Seamless Build Excellence**: Evolve into a tool that effortlessly harnesses Zig’s full build capabilities, turning complexity into simplicity and fueling rapid project creation.
+- **Thriving Zig Ecosystem**: Catalyze a flourishing community by streamlining dependency management and fostering collaboration, driving widespread adoption 
 
+
+- ****
+- **Full Feature Parity**: Support all build.zig capabilities (e.g., depends_on, custom steps).
+
+By alleviating the complexities of Zig’s build system while embracing its strengths, zbuild seeks to empower developers, making project setup and maintenance intuitive and efficient.

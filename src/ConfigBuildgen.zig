@@ -142,7 +142,7 @@ pub fn write(self: *ConfigBuildgen) !void {
     if (optimize_unused) {
         try self.writeLn("_ = optimize;", .{}, .{});
     }
-    // options modules that aren't imported
+    // options modules and dependencies that aren't imported
     for (self.options_modules.keys()) |name| {
         var options_module_unused = true;
         blk: for (self.modules.values()) |module| {
@@ -157,6 +157,22 @@ pub fn write(self: *ConfigBuildgen) !void {
         }
         if (options_module_unused) {
             try self.writeLn("_ = options_module_{s};", .{name}, .{});
+        }
+    }
+    for (self.dependencies.keys()) |name| {
+        var dependency_unused = true;
+        blk: for (self.modules.values()) |module| {
+            if (module.imports) |imports| {
+                for (imports) |import| {
+                    if (std.mem.eql(u8, name, import)) {
+                        dependency_unused = false;
+                        break :blk;
+                    }
+                }
+            }
+        }
+        if (dependency_unused) {
+            try self.writeLn("_ = dep_{s};", .{name}, .{});
         }
     }
 
@@ -532,7 +548,7 @@ pub fn writeFmt(self: *ConfigBuildgen, name: []const u8, item: Config.Fmt) !void
 pub fn writeRun(self: *ConfigBuildgen, name: []const u8, item: Config.Run) !void {
     const Args = @import("Args.zig");
 
-    const args = try Args.parse(self.allocator, item);
+    const args = try Args.initFromString(self.allocator, item);
     defer args.deinit();
 
     try self.writeLn(
@@ -553,6 +569,7 @@ pub fn writeDependency(self: *ConfigBuildgen, name: []const u8, item: Config.Dep
         .{ name, name },
         .{},
     );
+    try self.dependencies.put(name, undefined);
 }
 
 pub fn writeImport(self: *ConfigBuildgen, name: []const u8, imports: [][]const u8) !void {
@@ -751,12 +768,33 @@ fn semanticVersion(version: ?[]const u8) !?[]u8 {
     }
 }
 
-fn strSliceLiteral(str_slice_maybe: ?[]const []const u8) !?[]u8 {
+pub fn strSliceLiteral(str_slice_maybe: ?[]const []const u8) !?[]u8 {
     if (str_slice_maybe) |str_slice| {
         var w = std.io.fixedBufferStream(&scratch);
         const writer = w.writer();
 
         try writer.writeAll("&[_][]const u8{ ");
+
+        for (str_slice, 0..) |str, i| {
+            try writer.print("\"{s}\"", .{str});
+            if (i != str_slice.len - 1) {
+                try writer.writeAll(", ");
+            }
+        }
+
+        try writer.writeAll(" }");
+        return w.getWritten();
+    } else {
+        return null;
+    }
+}
+
+pub fn strTupleLiteral(str_slice_maybe: ?[]const []const u8) !?[]u8 {
+    if (str_slice_maybe) |str_slice| {
+        var w = std.io.fixedBufferStream(&scratch);
+        const writer = w.writer();
+
+        try writer.writeAll(".{ ");
 
         for (str_slice, 0..) |str, i| {
             try writer.print("\"{s}\"", .{str});
@@ -793,7 +831,7 @@ fn resolveImport(self: *ConfigBuildgen, import: []const u8) ![]const u8 {
     var w = std.io.fixedBufferStream(&scratch);
     const writer = w.writer();
     if (self.modules.contains(import)) {
-        try writer.print("b.modules.get(\"{s}\")", .{import});
+        try writer.print("b.modules.get(\"{s}\") orelse @panic(\"missing module {s}\")", .{ import, import });
     } else if (self.options_modules.contains(import)) {
         try writer.print("options_module_{s}", .{import});
     } else if (self.dependencies.contains(import)) {
