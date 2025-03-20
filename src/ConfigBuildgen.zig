@@ -79,7 +79,7 @@ pub fn write(self: *ConfigBuildgen) !void {
 
     if ((self.config.tests != null and self.config.tests.?.map.count() > 0) or self.modules.count() > 0) {
         try self.writeLn(
-            \\const run_tls_test = b.step("test", "Run all tests");
+            \\const tls_run_test = b.step("test", "Run all tests");
             \\
         , .{}, .{});
     }
@@ -98,7 +98,7 @@ pub fn write(self: *ConfigBuildgen) !void {
     }
     if (self.config.fmts) |fmts| {
         try self.writeLn(
-            \\const run_tls_fmt = b.step("fmt", "Run all fmts");
+            \\const tls_run_fmt = b.step("fmt", "Run all fmts");
             \\
         , .{}, .{});
         try self.writeItems(Config.Fmt, writeFmt, fmts.map);
@@ -428,14 +428,14 @@ pub fn writeExecutable(self: *ConfigBuildgen, name: []const u8, item: Config.Exe
     const install_exe_id = try allocFmtId(self.allocator, "install_exe", name);
     defer self.allocator.free(install_exe_id);
 
-    const install_tls_exe_id = try allocFmtId(self.allocator, "install_tls_exe", name);
-    defer self.allocator.free(install_tls_exe_id);
+    const tls_install_exe_id = try allocFmtId(self.allocator, "tls_install_exe", name);
+    defer self.allocator.free(tls_install_exe_id);
 
     const run_exe_id = try allocFmtId(self.allocator, "run_exe", name);
     defer self.allocator.free(run_exe_id);
 
-    const run_tls_exe_id = try allocFmtId(self.allocator, "run_tls_exe", name);
-    defer self.allocator.free(run_tls_exe_id);
+    const tls_run_exe_id = try allocFmtId(self.allocator, "tls_run_exe", name);
+    defer self.allocator.free(tls_run_exe_id);
 
     try self.writeLn(
         \\const {s} = b.addInstallArtifact({s}, .{{}});
@@ -451,19 +451,19 @@ pub fn writeExecutable(self: *ConfigBuildgen, name: []const u8, item: Config.Exe
         .{
             install_exe_id,
             exe_id,
-            install_tls_exe_id,
+            tls_install_exe_id,
             name,
             name,
-            install_tls_exe_id,
+            tls_install_exe_id,
             install_exe_id,
             install_exe_id,
             run_exe_id,
             exe_id,
             run_exe_id,
-            run_tls_exe_id,
+            tls_run_exe_id,
             name,
             name,
-            run_tls_exe_id,
+            tls_run_exe_id,
             run_exe_id,
         },
         .{},
@@ -499,8 +499,8 @@ pub fn writeLibrary(self: *ConfigBuildgen, name: []const u8, item: Config.Librar
     const install_lib_id = try allocFmtId(self.allocator, "install_lib", name);
     defer self.allocator.free(install_lib_id);
 
-    const install_tls_lib_id = try allocFmtId(self.allocator, "install_tls_lib", name);
-    defer self.allocator.free(install_tls_lib_id);
+    const tls_install_lib_id = try allocFmtId(self.allocator, "tls_install_lib", name);
+    defer self.allocator.free(tls_install_lib_id);
 
     try self.writeLn(
         \\const {s} = b.addInstallArtifact({s}, .{{}});
@@ -511,10 +511,10 @@ pub fn writeLibrary(self: *ConfigBuildgen, name: []const u8, item: Config.Librar
         .{
             install_lib_id,
             lib_id,
-            install_tls_lib_id,
+            tls_install_lib_id,
             name,
             name,
-            install_tls_lib_id,
+            tls_install_lib_id,
             install_lib_id,
             install_lib_id,
         },
@@ -548,8 +548,8 @@ pub fn writeObject(self: *ConfigBuildgen, name: []const u8, item: Config.Object)
     const install_obj_id = try allocFmtId(self.allocator, "install_obj", name);
     defer self.allocator.free(install_obj_id);
 
-    const install_tls_obj_id = try allocFmtId(self.allocator, "install_tls_obj", name);
-    defer self.allocator.free(install_tls_obj_id);
+    const tls_install_obj_id = try allocFmtId(self.allocator, "tls_install_obj", name);
+    defer self.allocator.free(tls_install_obj_id);
 
     try self.writeLn(
         \\const {s} = b.addInstallArtifact({s}, .{{}});
@@ -560,10 +560,10 @@ pub fn writeObject(self: *ConfigBuildgen, name: []const u8, item: Config.Object)
         .{
             install_obj_id,
             obj_id,
-            install_tls_obj_id,
+            tls_install_obj_id,
             name,
             name,
-            install_tls_obj_id,
+            tls_install_obj_id,
             install_obj_id,
             install_obj_id,
         },
@@ -597,14 +597,14 @@ pub fn writeTest(self: *ConfigBuildgen, name: []const u8, item: Config.Test) !vo
     const install_test_id = try allocFmtId(self.allocator, "install_test", name);
     defer self.allocator.free(install_test_id);
 
-    const install_tls_test_id = try allocFmtId(self.allocator, "install_tls_test", name);
-    defer self.allocator.free(install_tls_test_id);
+    const tls_install_test_id = try allocFmtId(self.allocator, "tls_install_test", name);
+    defer self.allocator.free(tls_install_test_id);
 
     const run_test_id = try allocFmtId(self.allocator, "run_test", name);
     defer self.allocator.free(run_test_id);
 
-    const run_tls_test_id = try allocFmtId(self.allocator, "run_tls_test", name);
-    defer self.allocator.free(run_tls_test_id);
+    const tls_run_test_id = try allocFmtId(self.allocator, "tls_run_test", name);
+    defer self.allocator.free(tls_run_test_id);
 
     try self.writeLn(
         \\const {s} = b.addInstallArtifact({s}, .{{}});
@@ -614,22 +614,22 @@ pub fn writeTest(self: *ConfigBuildgen, name: []const u8, item: Config.Test) !vo
         \\const {s} = b.addRunArtifact({s});
         \\const {s} = b.step("test:{s}", "Run the {s} test");
         \\{s}.dependOn(&{s}.step);
-        \\run_tls_test.dependOn(&{s}.step);
+        \\tls_run_test.dependOn(&{s}.step);
     ,
         .{
             install_test_id,
             test_id,
-            install_tls_test_id,
+            tls_install_test_id,
             name,
             name,
-            install_tls_test_id,
+            tls_install_test_id,
             install_test_id,
             run_test_id,
             test_id,
-            run_tls_test_id,
+            tls_run_test_id,
             name,
             name,
-            run_tls_test_id,
+            tls_run_test_id,
             run_test_id,
             run_test_id,
         },
@@ -655,15 +655,15 @@ pub fn writeFmt(self: *ConfigBuildgen, name: []const u8, item: Config.Fmt) !void
     try self.writeLn("}});", .{}, .{});
     try self.writer.writeAll("\n");
 
-    const run_tls_fmt_id = try allocFmtId(self.allocator, "run_tls_fmt", name);
-    defer self.allocator.free(run_tls_fmt_id);
+    const tls_run_fmt_id = try allocFmtId(self.allocator, "tls_run_fmt", name);
+    defer self.allocator.free(tls_run_fmt_id);
 
     try self.writeLn(
         \\const {s} = b.step("fmt:{s}", "Run the {s} fmt");
         \\{s}.dependOn(&{s}.step);
-        \\run_tls_fmt.dependOn(&{s}.step);
+        \\tls_run_fmt.dependOn(&{s}.step);
     ,
-        .{ run_tls_fmt_id, name, name, run_tls_fmt_id, fmt_id, fmt_id },
+        .{ tls_run_fmt_id, name, name, tls_run_fmt_id, fmt_id, fmt_id },
         .{},
     );
 }
@@ -677,8 +677,8 @@ pub fn writeRun(self: *ConfigBuildgen, name: []const u8, item: Config.Run) !void
     const run_id = try allocFmtId(self.allocator, "run", name);
     defer self.allocator.free(run_id);
 
-    const run_tls_id = try allocFmtId(self.allocator, "run_tls", name);
-    defer self.allocator.free(run_tls_id);
+    const tls_run_id = try allocFmtId(self.allocator, "tls_run", name);
+    defer self.allocator.free(tls_run_id);
 
     try self.writeLn(
         \\const {s} = b.addSystemCommand({s});
@@ -688,10 +688,10 @@ pub fn writeRun(self: *ConfigBuildgen, name: []const u8, item: Config.Run) !void
         .{
             run_id,
             (try strSliceLiteral(args.args.items)).?,
-            run_tls_id,
+            tls_run_id,
             name,
             name,
-            run_tls_id,
+            tls_run_id,
             run_id,
         },
         .{},
