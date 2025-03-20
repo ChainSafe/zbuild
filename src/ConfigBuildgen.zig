@@ -156,7 +156,7 @@ pub fn write(self: *ConfigBuildgen) !void {
             }
         }
         if (options_module_unused) {
-            try self.writeLn("_ = options_module_{s};", .{name}, .{});
+            try self.writeLn("_ = {s};", .{try fmtId("options_module", name)}, .{});
         }
     }
     for (self.dependencies.keys()) |name| {
@@ -172,7 +172,7 @@ pub fn write(self: *ConfigBuildgen) !void {
             }
         }
         if (dependency_unused) {
-            try self.writeLn("_ = dep_{s};", .{name}, .{});
+            try self.writeLn("_ = {s};", .{try fmtId("dep", name)}, .{});
         }
     }
 
@@ -234,11 +234,11 @@ pub fn writeOption(self: *ConfigBuildgen, name: []const u8, item: Config.Option)
             };
         },
         .enum_list => |e| {
-            const enum_name = try std.fmt.allocPrint(self.allocator, "Enum{s}", .{try capitalize(name)});
-            try self.writeLn("const {s} = enum {s};", .{ enum_name, e.enum_options }, .{});
+            const enum_id = try allocFmtId(self.allocator, "Enum", name);
+            try self.writeLn("const {s} = enum {s};", .{ enum_id, e.enum_options }, .{});
             break :blk .{
-                enum_name,
-                if (e.default) |d| try std.fmt.allocPrint(self.allocator, "{s}", .{try enumSliceLiteral(enum_name, d)}) else null,
+                enum_id,
+                if (e.default) |d| try std.fmt.allocPrint(self.allocator, "{s}", .{try enumSliceLiteral(enum_id, d)}) else null,
                 e.description,
             };
         },
@@ -292,18 +292,22 @@ pub fn writeOption(self: *ConfigBuildgen, name: []const u8, item: Config.Option)
             };
         },
     };
+
+    const option_id = try allocFmtId(self.allocator, "option", name);
+    defer self.allocator.free(option_id);
+
     if (default) |d| {
         try self.writeLn(
-            \\const option_{s} = b.option({s}, "{s}", "{s}") orelse {s};
+            \\const {s} = b.option({s}, "{s}", "{s}") orelse {s};
         ,
-            .{ name, t, name, description orelse "", d },
+            .{ option_id, t, name, description orelse "", d },
             .{},
         );
     } else {
         try self.writeLn(
-            \\const option_{s} = b.option({s}, "{s}", "{s}");
+            \\const {s} = b.option({s}, "{s}", "{s}");
         ,
-            .{ name, t, name, description orelse "" },
+            .{ option_id, t, name, description orelse "" },
             .{},
         );
     }
@@ -312,27 +316,38 @@ pub fn writeOption(self: *ConfigBuildgen, name: []const u8, item: Config.Option)
 }
 
 pub fn writeOptionsModule(self: *ConfigBuildgen, name: []const u8, item: Config.OptionsModule) !void {
+    const options_id = try allocFmtId(self.allocator, "options", name);
+    defer self.allocator.free(options_id);
+
     try self.writeLn(
-        "const options_{s} = b.addOptions();",
-        .{name},
+        "const {s} = b.addOptions();",
+        .{options_id},
         .{},
     );
 
     for (item.map.keys(), item.map.values()) |option_name, value| {
         try self.writeOption(option_name, value);
         const option = self.options.get(option_name) orelse return error.MissingOption;
+        const option_id = try allocFmtId(self.allocator, "option", option_name);
+        defer self.allocator.free(option_id);
         try self.writeLn(
-            \\options_{s}.addOption({s}{s}, "{s}", option_{s});
+            \\{s}.addOption({s}{s}, "{s}", {s});
         ,
-            .{ name, if (option.optional) "?" else "", option.type_name, option_name, option_name },
+            .{
+                options_id,
+                if (option.optional) "?" else "",
+                option.type_name,
+                option_name,
+                option_id,
+            },
             .{},
         );
     }
 
     try self.writeLn(
-        \\const options_module_{s} = options_{s}.createModule();
+        \\const {s} = {s}.createModule();
     ,
-        .{ name, name },
+        .{ try fmtId("options_module", name), options_id },
         .{},
     );
 
@@ -340,10 +355,13 @@ pub fn writeOptionsModule(self: *ConfigBuildgen, name: []const u8, item: Config.
 }
 
 pub fn writeModule(self: *ConfigBuildgen, name: []const u8, item: Config.Module) !void {
+    const module_id = try allocFmtId(self.allocator, "module", name);
+    defer self.allocator.free(module_id);
+
     try self.writeLn(
-        \\const module_{s} = b.createModule(.{{
+        \\const {s} = b.createModule(.{{
     ,
-        .{name},
+        .{module_id},
         .{},
     );
 
@@ -372,9 +390,9 @@ pub fn writeModule(self: *ConfigBuildgen, name: []const u8, item: Config.Module)
 
     if (item.private orelse true) {
         try self.writeLn(
-            \\b.modules.put(b.dupe("{s}"), module_{s}) catch @panic("OOM");
+            \\b.modules.put(b.dupe("{s}"), {s}) catch @panic("OOM");
         ,
-            .{ name, name },
+            .{ name, module_id },
             .{},
         );
     }
@@ -382,18 +400,21 @@ pub fn writeModule(self: *ConfigBuildgen, name: []const u8, item: Config.Module)
 }
 
 pub fn writeExecutable(self: *ConfigBuildgen, name: []const u8, item: Config.Executable) !void {
-    const module_name = try self.allocModuleName(name, item.root_module);
-    defer self.allocator.free(module_name);
+    const module_id = try self.allocModuleId(name, item.root_module);
+    defer self.allocator.free(module_id);
+
+    const exe_id = try allocFmtId(self.allocator, "exe", name);
+    defer self.allocator.free(exe_id);
 
     try self.writeLn(
-        "const exe_{s} = b.addExecutable(.{{",
-        .{name},
+        "const {s} = b.addExecutable(.{{",
+        .{exe_id},
         .{},
     );
 
     try self.writeField("name", name, .{});
     try self.writeField("version", try semanticVersion(item.version), .{ .quote_str = false });
-    try self.writeField("root_module", module_name, .{ .quote_str = false });
+    try self.writeField("root_module", module_id, .{ .quote_str = false });
     try self.writeField("linkage", item.linkage, .{});
     try self.writeField("max_rss", item.max_rss, .{});
     try self.writeField("use_llvm", item.use_llvm, .{});
@@ -404,35 +425,67 @@ pub fn writeExecutable(self: *ConfigBuildgen, name: []const u8, item: Config.Exe
     try self.writeLn("}});", .{}, .{});
     try self.writer.writeAll("\n");
 
+    const install_exe_id = try allocFmtId(self.allocator, "install_exe", name);
+    defer self.allocator.free(install_exe_id);
+
+    const install_tls_exe_id = try allocFmtId(self.allocator, "install_tls_exe", name);
+    defer self.allocator.free(install_tls_exe_id);
+
+    const run_exe_id = try allocFmtId(self.allocator, "run_exe", name);
+    defer self.allocator.free(run_exe_id);
+
+    const run_tls_exe_id = try allocFmtId(self.allocator, "run_tls_exe", name);
+    defer self.allocator.free(run_tls_exe_id);
+
     try self.writeLn(
-        \\const install_exe_{s} = b.addInstallArtifact(exe_{s}, .{{}});
-        \\const install_tls_exe_{s} = b.step("build-exe:{s}", "Install the {s} executable");
-        \\install_tls_exe_{s}.dependOn(&install_exe_{s}.step);
-        \\b.getInstallStep().dependOn(&install_exe_{s}.step);
+        \\const {s} = b.addInstallArtifact({s}, .{{}});
+        \\const {s} = b.step("build-exe:{s}", "Install the {s} executable");
+        \\{s}.dependOn(&{s}.step);
+        \\b.getInstallStep().dependOn(&{s}.step);
         \\
-        \\const run_exe_{s} = b.addRunArtifact(exe_{s});
-        \\if (b.args) |args| run_exe_{s}.addArgs(args);
-        \\const run_tls_exe_{s} = b.step("run:{s}", "Run the {s} executable");
-        \\run_tls_exe_{s}.dependOn(&run_exe_{s}.step);
+        \\const {s} = b.addRunArtifact({s});
+        \\if (b.args) |args| {s}.addArgs(args);
+        \\const {s} = b.step("run:{s}", "Run the {s} executable");
+        \\{s}.dependOn(&{s}.step);
     ,
-        .{ name, name, name, name, name, name, name, name, name, name, name, name, name, name, name, name },
+        .{
+            install_exe_id,
+            exe_id,
+            install_tls_exe_id,
+            name,
+            name,
+            install_tls_exe_id,
+            install_exe_id,
+            install_exe_id,
+            run_exe_id,
+            exe_id,
+            run_exe_id,
+            run_tls_exe_id,
+            name,
+            name,
+            run_tls_exe_id,
+            run_exe_id,
+        },
         .{},
     );
 }
 
 pub fn writeLibrary(self: *ConfigBuildgen, name: []const u8, item: Config.Library) !void {
-    const module_name = try self.allocModuleName(name, item.root_module);
-    defer self.allocator.free(module_name);
+    const module_id = try self.allocModuleId(name, item.root_module);
+    defer self.allocator.free(module_id);
+
+    const lib_id = try allocFmtId(self.allocator, "lib", name);
+    defer self.allocator.free(lib_id);
 
     try self.writeLn(
-        "const lib_{s} = b.addLibrary(.{{",
-        .{name},
+        "const {s} = b.addLibrary(.{{",
+        .{lib_id},
         .{},
     );
 
     try self.writeField("name", name, .{});
     try self.writeField("version", try semanticVersion(item.version), .{ .quote_str = false });
-    try self.writeField("root_module", module_name, .{ .quote_str = false });
+    try self.writeField("root_module", module_id, .{ .quote_str = false });
     try self.writeField("linkage", item.linkage, .{});
     try self.writeField("max_rss", item.max_rss, .{});
     try self.writeField("use_llvm", item.use_llvm, .{});
@@ -443,29 +496,47 @@ pub fn writeLibrary(self: *ConfigBuildgen, name: []const u8, item: Config.Librar
     try self.writeLn("}});", .{}, .{});
     try self.writer.writeAll("\n");
 
+    const install_lib_id = try allocFmtId(self.allocator, "install_lib", name);
+    defer self.allocator.free(install_lib_id);
+
+    const install_tls_lib_id = try allocFmtId(self.allocator, "install_tls_lib", name);
+    defer self.allocator.free(install_tls_lib_id);
+
     try self.writeLn(
-        \\const install_lib_{s} = b.addInstallArtifact(lib_{s}, .{{}});
-        \\const install_tls_lib_{s} = b.step("build-lib:{s}", "Install the {s} library");
-        \\install_tls_lib_{s}.dependOn(&install_lib_{s}.step);
-        \\b.getInstallStep().dependOn(&install_lib_{s}.step);
+        \\const {s} = b.addInstallArtifact({s}, .{{}});
+        \\const {s} = b.step("build-lib:{s}", "Install the {s} library");
+        \\{s}.dependOn(&{s}.step);
+        \\b.getInstallStep().dependOn(&{s}.step);
     ,
-        .{ name, name, name, name, name, name, name, name },
+        .{
+            install_lib_id,
+            lib_id,
+            install_tls_lib_id,
+            name,
+            name,
+            install_tls_lib_id,
+            install_lib_id,
+            install_lib_id,
+        },
         .{},
     );
 }
 
 pub fn writeObject(self: *ConfigBuildgen, name: []const u8, item: Config.Object) !void {
-    const module_name = try self.allocModuleName(name, item.root_module);
-    defer self.allocator.free(module_name);
+    const module_id = try self.allocModuleId(name, item.root_module);
+    defer self.allocator.free(module_id);
+
+    const obj_id = try allocFmtId(self.allocator, "obj", name);
+    defer self.allocator.free(obj_id);
 
     try self.writeLn(
-        "const obj_{s} = b.addObject(.{{",
-        .{name},
+        "const {s} = b.addObject(.{{",
+        .{obj_id},
         .{},
     );
 
     try self.writeField("name", name, .{});
-    try self.writeField("root_module", module_name, .{ .quote_str = false });
+    try self.writeField("root_module", module_id, .{ .quote_str = false });
     try self.writeField("max_rss", item.max_rss, .{});
     try self.writeField("use_llvm", item.use_llvm, .{});
     try self.writeField("use_lld", item.use_lld, .{});
@@ -474,29 +545,47 @@ pub fn writeObject(self: *ConfigBuildgen, name: []const u8, item: Config.Object)
     try self.writeLn("}});", .{}, .{});
     try self.writer.writeAll("\n");
 
+    const install_obj_id = try allocFmtId(self.allocator, "install_obj", name);
+    defer self.allocator.free(install_obj_id);
+
+    const install_tls_obj_id = try allocFmtId(self.allocator, "install_tls_obj", name);
+    defer self.allocator.free(install_tls_obj_id);
+
     try self.writeLn(
-        \\const install_obj_{s} = b.addInstallArtifact(obj_{s}, .{{}});
-        \\const install_tls_obj_{s} = b.step("build-obj:{s}", "Install the {s} object");
-        \\install_tls_obj_{s}.dependOn(&install_obj_{s}.step);
-        \\b.getInstallStep().dependOn(&install_obj_{s}.step);
+        \\const {s} = b.addInstallArtifact({s}, .{{}});
+        \\const {s} = b.step("build-obj:{s}", "Install the {s} object");
+        \\{s}.dependOn(&{s}.step);
+        \\b.getInstallStep().dependOn(&{s}.step);
     ,
-        .{ name, name, name, name, name, name, name, name },
+        .{
+            install_obj_id,
+            obj_id,
+            install_tls_obj_id,
+            name,
+            name,
+            install_tls_obj_id,
+            install_obj_id,
+            install_obj_id,
+        },
         .{},
     );
 }
 
 pub fn writeTest(self: *ConfigBuildgen, name: []const u8, item: Config.Test) !void {
-    const module_name = try self.allocModuleName(name, item.root_module);
-    defer self.allocator.free(module_name);
+    const module_id = try self.allocModuleId(name, item.root_module);
+    defer self.allocator.free(module_id);
+
+    const test_id = try allocFmtId(self.allocator, "test", name);
+    defer self.allocator.free(test_id);
 
     try self.writeLn(
-        "const test_{s} = b.addTest(.{{",
-        .{name},
+        "const {s} = b.addTest(.{{",
+        .{test_id},
         .{},
     );
 
     try self.writeField("name", name, .{});
-    try self.writeField("root_module", module_name, .{ .quote_str = false });
+    try self.writeField("root_module", module_id, .{ .quote_str = false });
     try self.writeField("max_rss", item.max_rss, .{});
     try self.writeField("use_llvm", item.use_llvm, .{});
     try self.writeField("use_lld", item.use_lld, .{});
@@ -505,26 +594,57 @@ pub fn writeTest(self: *ConfigBuildgen, name: []const u8, item: Config.Test) !vo
 
     try self.writeLn("}});", .{}, .{});
 
+    const install_test_id = try allocFmtId(self.allocator, "install_test", name);
+    defer self.allocator.free(install_test_id);
+
+    const install_tls_test_id = try allocFmtId(self.allocator, "install_tls_test", name);
+    defer self.allocator.free(install_tls_test_id);
+
+    const run_test_id = try allocFmtId(self.allocator, "run_test", name);
+    defer self.allocator.free(run_test_id);
+
+    const run_tls_test_id = try allocFmtId(self.allocator, "run_tls_test", name);
+    defer self.allocator.free(run_tls_test_id);
+
     try self.writeLn(
-        \\const install_test_{s} = b.addInstallArtifact(test_{s}, .{{}});
-        \\const install_tls_test_{s} = b.step("build-test:{s}", "Install the {s} test");
-        \\install_tls_test_{s}.dependOn(&install_test_{s}.step);
+        \\const {s} = b.addInstallArtifact({s}, .{{}});
+        \\const {s} = b.step("build-test:{s}", "Install the {s} test");
+        \\{s}.dependOn(&{s}.step);
         \\
-        \\const run_test_{s} = b.addRunArtifact(test_{s});
-        \\const run_tls_test_{s} = b.step("test:{s}", "Run the {s} test");
-        \\run_tls_test_{s}.dependOn(&run_test_{s}.step);
-        \\run_tls_test.dependOn(&run_test_{s}.step);
+        \\const {s} = b.addRunArtifact({s});
+        \\const {s} = b.step("test:{s}", "Run the {s} test");
+        \\{s}.dependOn(&{s}.step);
+        \\run_tls_test.dependOn(&{s}.step);
     ,
-        .{ name, name, name, name, name, name, name, name, name, name, name, name, name, name, name },
+        .{
+            install_test_id,
+            test_id,
+            install_tls_test_id,
+            name,
+            name,
+            install_tls_test_id,
+            install_test_id,
+            run_test_id,
+            test_id,
+            run_tls_test_id,
+            name,
+            name,
+            run_tls_test_id,
+            run_test_id,
+            run_test_id,
+        },
         .{},
     );
 }
 
 pub fn writeFmt(self: *ConfigBuildgen, name: []const u8, item: Config.Fmt) !void {
+    const fmt_id = try allocFmtId(self.allocator, "fmt", name);
+    defer self.allocator.free(fmt_id);
+
     try self.writeLn(
-        \\const fmt_{s} = b.addFmt(.{{
+        \\const {s} = b.addFmt(.{{
     ,
-        .{name},
+        .{fmt_id},
         .{},
     );
 
@@ -535,12 +655,15 @@ pub fn writeFmt(self: *ConfigBuildgen, name: []const u8, item: Config.Fmt) !void
     try self.writeLn("}});", .{}, .{});
     try self.writer.writeAll("\n");
 
+    const run_tls_fmt_id = try allocFmtId(self.allocator, "run_tls_fmt", name);
+    defer self.allocator.free(run_tls_fmt_id);
+
     try self.writeLn(
-        \\const run_tls_fmt_{s} = b.step("fmt:{s}", "Run the {s} fmt");
-        \\run_tls_fmt_{s}.dependOn(&fmt_{s}.step);
-        \\run_tls_fmt.dependOn(&fmt_{s}.step);
+        \\const {s} = b.step("fmt:{s}", "Run the {s} fmt");
+        \\{s}.dependOn(&{s}.step);
+        \\run_tls_fmt.dependOn(&{s}.step);
     ,
-        .{ name, name, name, name, name, name },
+        .{ run_tls_fmt_id, name, name, run_tls_fmt_id, fmt_id, fmt_id },
         .{},
     );
 }
@@ -551,12 +674,26 @@ pub fn writeRun(self: *ConfigBuildgen, name: []const u8, item: Config.Run) !void
     const args = try Args.initFromString(self.allocator, item);
     defer args.deinit();
 
+    const run_id = try allocFmtId(self.allocator, "run", name);
+    defer self.allocator.free(run_id);
+
+    const run_tls_id = try allocFmtId(self.allocator, "run_tls", name);
+    defer self.allocator.free(run_tls_id);
+
     try self.writeLn(
-        \\const run_{s} = b.addSystemCommand({s});
-        \\const run_tls_{s} = b.step("run:{s}", "Run the {s} run");
-        \\run_tls_{s}.dependOn(&run_{s}.step);
+        \\const {s} = b.addSystemCommand({s});
+        \\const {s} = b.step("run:{s}", "Run the {s} run");
+        \\{s}.dependOn(&{s}.step);
     ,
-        .{ name, (try strSliceLiteral(args.args.items)).?, name, name, name, name, name },
+        .{
+            run_id,
+            (try strSliceLiteral(args.args.items)).?,
+            run_tls_id,
+            name,
+            name,
+            run_tls_id,
+            run_id,
+        },
         .{},
     );
 }
@@ -564,9 +701,9 @@ pub fn writeRun(self: *ConfigBuildgen, name: []const u8, item: Config.Run) !void
 pub fn writeDependency(self: *ConfigBuildgen, name: []const u8, item: Config.Dependency) !void {
     _ = item;
     try self.writeLn(
-        \\const dep_{s} = b.dependency("{s}", .{{}});
+        \\const {s} = b.dependency("{s}", .{{}});
     ,
-        .{ name, name },
+        .{ try fmtId("dep", name), name },
         .{},
     );
     try self.dependencies.put(name, undefined);
@@ -574,10 +711,13 @@ pub fn writeDependency(self: *ConfigBuildgen, name: []const u8, item: Config.Dep
 
 pub fn writeImport(self: *ConfigBuildgen, name: []const u8, imports: [][]const u8) !void {
     for (imports) |import| {
+        const module_id = try allocFmtId(self.allocator, "module", name);
+        defer self.allocator.free(module_id);
+
         try self.writeLn(
-            \\module_{s}.addImport("{s}", {s});
+            \\{s}.addImport("{s}", {s});
         ,
-            .{ name, import, try self.resolveImport(import) },
+            .{ module_id, import, try self.resolveImport(import) },
             .{},
         );
     }
@@ -655,11 +795,11 @@ fn writeField(self: *ConfigBuildgen, key: []const u8, value: anytype, comptime o
 }
 
 /// return the module name, writing the module definition first if necessary
-fn allocModuleName(self: *ConfigBuildgen, name: []const u8, item: Config.ModuleLink) ![]const u8 {
-    return try std.fmt.allocPrint(
+fn allocModuleId(self: *ConfigBuildgen, name: []const u8, item: Config.ModuleLink) ![]const u8 {
+    return try allocFmtId(
         self.allocator,
-        "module_{s}",
-        .{switch (item.value) {
+        "module",
+        switch (item.value) {
             .name => |n| n,
             .module => |m| blk: {
                 const n = m.name orelse name;
@@ -667,24 +807,13 @@ fn allocModuleName(self: *ConfigBuildgen, name: []const u8, item: Config.ModuleL
                 try self.writer.writeAll("\n");
                 break :blk n;
             },
-        }},
+        },
     );
 }
 
 /// used for temp strings
 /// This is safe because only a single consumer of scratch exists at a time
 threadlocal var scratch: [4096]u8 = undefined;
-
-fn capitalize(s: []const u8) ![]const u8 {
-    if (s.len == 0) {
-        return s;
-    }
-    return try std.fmt.bufPrint(
-        &scratch,
-        "{c}{s}",
-        .{ std.ascii.toUpper(s[0]), s[1..] },
-    );
-}
 
 fn lazyPath(path: ?[]const u8) !?[]u8 {
     if (path) |p| {
@@ -828,17 +957,29 @@ fn enumSliceLiteral(enum_name: []const u8, enum_slice: []const []const u8) ![]u8
 }
 
 fn resolveImport(self: *ConfigBuildgen, import: []const u8) ![]const u8 {
-    var w = std.io.fixedBufferStream(&scratch);
-    const writer = w.writer();
     if (self.modules.contains(import)) {
-        try writer.print("b.modules.get(\"{s}\") orelse @panic(\"missing module {s}\")", .{ import, import });
+        return try std.fmt.bufPrint(&scratch, "b.modules.get(\"{s}\") orelse @panic(\"missing module {s}\")", .{ import, import });
     } else if (self.options_modules.contains(import)) {
-        try writer.print("options_module_{s}", .{import});
+        return try fmtId("options_module", import);
     } else if (self.dependencies.contains(import)) {
-        try writer.print("dep_{s}.module(\"{s}\")", .{ import, import });
-    } else {
-        try writer.print("@panic(\"missing import {s}\")", .{import});
-    }
+        var buf: [4096]u8 = undefined;
+        var buf_a = std.heap.FixedBufferAllocator.init(&buf);
+        const alloc = buf_a.allocator();
 
-    return w.getWritten();
+        const dep_id = try alloc.dupe(u8, try fmtId("dep", import));
+        return try std.fmt.bufPrint(&scratch, "{s}.module(\"{s}\")", .{ dep_id, import });
+    } else {
+        return try std.fmt.bufPrint(&scratch, "@panic(\"missing import {s}\")", .{import});
+    }
+}
+
+/// wrapper around std.zig.fmtId that includes a prefix string
+fn fmtId(prefix: []const u8, name: []const u8) ![]const u8 {
+    var fmt_scratch: [4096]u8 = undefined;
+    return try std.fmt.bufPrint(&scratch, "{}", .{std.zig.fmtId(try std.fmt.bufPrint(&fmt_scratch, "{s}_{s}", .{ prefix, name }))});
+}
+
+/// wrapper around std.zig.fmtId that includes a prefix string, consumer is responsible for freeing
+fn allocFmtId(allocator: std.mem.Allocator, prefix: []const u8, name: []const u8) ![]const u8 {
+    return try allocator.dupe(u8, try fmtId(prefix, name));
 }
