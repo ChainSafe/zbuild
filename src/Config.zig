@@ -15,6 +15,7 @@ paths: ?[][]const u8 = null,
 description: ?[]const u8 = null,
 keywords: ?[][]const u8 = null,
 dependencies: ?ArrayHashMap(Dependency) = null,
+write_files: ?ArrayHashMap(WriteFile) = null,
 options: ?ArrayHashMap(Option) = null,
 options_modules: ?ArrayHashMap(OptionsModule) = null,
 modules: ?ArrayHashMap(Module) = null,
@@ -180,6 +181,42 @@ pub const Option = CompactUnion(union(enum) {
 });
 
 pub const OptionsModule = ArrayHashMap(Option);
+
+pub const WriteFile = struct {
+    private: ?bool = null,
+    items: ?ArrayHashMap(Path) = null,
+
+    pub const Path = CompactUnion(union(enum) {
+        file: File,
+        dir: Dir,
+
+        pub const File = struct {
+            type: []const u8,
+            path: []const u8,
+        };
+
+        pub const Dir = struct {
+            type: []const u8,
+            path: []const u8,
+            exclude_extensions: ?[][]const u8 = null,
+            include_extensions: ?[][]const u8 = null,
+        };
+
+        const TagType = @typeInfo(@This()).@"union".tag_type.?;
+        pub fn enumFromValue(source: std.json.Value) ?TagType {
+            if (source != .object) return null;
+            const type_value = source.object.get("type") orelse return null;
+            if (type_value != .string) return null;
+            const t = type_value.string;
+            if (std.mem.eql(u8, t, "file")) {
+                return .file;
+            } else if (std.mem.eql(u8, t, "dir")) {
+                return .dir;
+            }
+            return null;
+        }
+    });
+};
 
 pub const Module = struct {
     name: ?[]const u8 = null,

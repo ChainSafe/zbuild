@@ -11,10 +11,13 @@ allocator: std.mem.Allocator,
 config: Config,
 writer: Writer,
 
+write_files: std.StringArrayHashMap(Config.WriteFile),
 options: std.StringArrayHashMap(Option),
 options_modules: std.StringArrayHashMap(Config.OptionsModule),
 modules: std.StringArrayHashMap(Config.Module),
 dependencies: std.StringArrayHashMap(void),
+executables: std.StringArrayHashMap(Config.Executable),
+runs: std.StringArrayHashMap(Config.Run),
 
 const Option = struct {
     type_name: []const u8,
@@ -26,16 +29,24 @@ pub fn init(allocator: std.mem.Allocator, config: Config, writer: Writer) Config
         .allocator = allocator,
         .config = config,
         .writer = writer,
+        .write_files = std.StringArrayHashMap(Config.WriteFile).init(allocator),
         .options = std.StringArrayHashMap(Option).init(allocator),
         .options_modules = std.StringArrayHashMap(Config.OptionsModule).init(allocator),
         .modules = std.StringArrayHashMap(Config.Module).init(allocator),
         .dependencies = std.StringArrayHashMap(void).init(allocator),
+        .executables = std.StringArrayHashMap(Config.Executable).init(allocator),
+        .runs = std.StringArrayHashMap(Config.Run).init(allocator),
     };
 }
 
 pub fn deinit(self: *ConfigBuildgen) void {
+    self.write_files.deinit();
+    self.options.deinit();
+    self.options_modules.deinit();
     self.modules.deinit();
     self.dependencies.deinit();
+    self.executables.deinit();
+    self.runs.deinit();
 }
 
 pub fn write(self: *ConfigBuildgen) !void {
@@ -53,10 +64,13 @@ pub fn write(self: *ConfigBuildgen) !void {
         .{ .indent = 0 },
     );
 
-    // add all config items without linking depends_on or imports
+    // add all config items without linking depends_on, lazy paths, or imports
 
     if (self.config.dependencies) |dependencies| {
         try self.writeItems(Config.Dependency, writeDependency, dependencies.map);
+    }
+    if (self.config.write_files) |write_files| {
+        try self.writeItems(Config.WriteFile, writeWriteFile, write_files.map);
     }
     if (self.config.options) |options| {
         try self.writeItems(Config.Option, writeOption, options.map);
@@ -105,6 +119,12 @@ pub fn write(self: *ConfigBuildgen) !void {
     }
     if (self.config.runs) |runs| {
         try self.writeItems(Config.Run, writeRun, runs.map);
+    }
+
+    // add files/dirs to write files
+
+    if (self.config.write_files) |write_files| {
+        try self.writeItems(Config.WriteFile, writeWriteFileItems, write_files.map);
     }
 
     // link all imports
@@ -217,6 +237,56 @@ fn writeImports(
     }
 }
 
+pub fn writeWriteFile(self: *ConfigBuildgen, name: []const u8, item: Config.WriteFile) !void {
+    const write_files_id = try allocFmtId(self.allocator, "write_files", name);
+    defer self.allocator.free(write_files_id);
+
+    try self.writeLn(
+        \\const {s} = b.{s}();
+    ,
+        .{
+            write_files_id,
+            if (item.private orelse false) "addWriteFiles" else "addNamedWriteFiles",
+        },
+        .{},
+    );
+    try self.write_files.put(name, item);
+}
+
+pub fn writeWriteFileItems(self: *ConfigBuildgen, name: []const u8, item: Config.WriteFile) !void {
+    const write_files_id = try allocFmtId(self.allocator, "write_files", name);
+    defer self.allocator.free(write_files_id);
+
+    if (item.items) |items| {
+        for (items.map.keys(), items.map.values()) |key, value| {
+            switch (value.value) {
+                .file => |f| {
+                    try self.writeLn(
+                        \\_ = {s}.addCopyFile({s}, "{s}");
+                    ,
+                        .{ write_files_id, try self.resolveLazyPath(f.path, SourcesForWriteFiles), key },
+                        .{},
+                    );
+                },
+                .dir => |d| {
+                    try self.writeLn(
+                        \\_ = {s}.addCopyDirectory({s}, "{s}", .{{ .exclude_extensions = {s}, include_extensions = {s} }});
+                    ,
+                        .{
+                            write_files_id,
+                            try self.resolveLazyPath(d.path, SourcesForWriteFiles),
+                            key,
+                            try strSliceLiteral(d.exclude_extensions) orelse "&.{}",
+                            try strSliceLiteral(d.include_extensions) orelse "null",
+                        },
+                        .{},
+                    );
+                },
+            }
+        }
+    }
+}
+
 pub fn writeOption(self: *ConfigBuildgen, name: []const u8, item: Config.Option) !void {
     const t, const default, const description = blk: switch (item.value) {
         .bool => |b| {
@@ -259,7 +329,7 @@ pub fn writeOption(self: *ConfigBuildgen, name: []const u8, item: Config.Option)
         .lazy_path => |l| {
             break :blk .{
                 "std.Build.LazyPath",
-                try lazyPath(l.default),
+                if (l.default) |d| try self.resolveLazyPath(d, SourcesForOptions) else null,
                 l.description,
             };
         },
@@ -365,7 +435,11 @@ pub fn writeModule(self: *ConfigBuildgen, name: []const u8, item: Config.Module)
         .{},
     );
 
-    try self.writeField("root_source_file", try lazyPath(item.root_source_file), .{ .quote_str = false });
+    try self.writeField(
+        "root_source_file",
+        if (item.root_source_file) |f| try self.resolveLazyPath(f, SourcesForModules) else null,
+        .{ .quote_str = false },
+    );
     try self.writeField("target", try resolvedTarget(item.target), .{ .quote_str = false });
     try self.writeField("optimize", try optimize(item.optimize), .{ .quote_str = false });
     try self.writeField("link_libc", item.link_libc, .{});
@@ -419,8 +493,16 @@ pub fn writeExecutable(self: *ConfigBuildgen, name: []const u8, item: Config.Exe
     try self.writeField("max_rss", item.max_rss, .{});
     try self.writeField("use_llvm", item.use_llvm, .{});
     try self.writeField("use_lld", item.use_lld, .{});
-    try self.writeField("zig_lib_dir", try lazyPath(item.zig_lib_dir), .{ .quote_str = false });
-    try self.writeField("win32_manifest", try lazyPath(item.win32_manifest), .{ .quote_str = false });
+    try self.writeField(
+        "zig_lib_dir",
+        if (item.zig_lib_dir) |f| try self.resolveLazyPath(f, SourcesForModules) else null,
+        .{ .quote_str = false },
+    );
+    try self.writeField(
+        "win32_manifest",
+        if (item.win32_manifest) |f| try self.resolveLazyPath(f, SourcesForModules) else null,
+        .{ .quote_str = false },
+    );
 
     try self.writeLn("}});", .{}, .{});
     try self.writer.writeAll("\n");
@@ -468,6 +550,7 @@ pub fn writeExecutable(self: *ConfigBuildgen, name: []const u8, item: Config.Exe
         },
         .{},
     );
+    try self.executables.put(name, item);
 }
 
 pub fn writeLibrary(self: *ConfigBuildgen, name: []const u8, item: Config.Library) !void {
@@ -490,8 +573,16 @@ pub fn writeLibrary(self: *ConfigBuildgen, name: []const u8, item: Config.Librar
     try self.writeField("max_rss", item.max_rss, .{});
     try self.writeField("use_llvm", item.use_llvm, .{});
     try self.writeField("use_lld", item.use_lld, .{});
-    try self.writeField("zig_lib_dir", try lazyPath(item.zig_lib_dir), .{ .quote_str = false });
-    try self.writeField("win32_manifest", try lazyPath(item.win32_manifest), .{ .quote_str = false });
+    try self.writeField(
+        "zig_lib_dir",
+        if (item.zig_lib_dir) |f| try self.resolveLazyPath(f, SourcesForModules) else null,
+        .{ .quote_str = false },
+    );
+    try self.writeField(
+        "win32_manifest",
+        if (item.win32_manifest) |f| try self.resolveLazyPath(f, SourcesForModules) else null,
+        .{ .quote_str = false },
+    );
 
     try self.writeLn("}});", .{}, .{});
     try self.writer.writeAll("\n");
@@ -540,7 +631,11 @@ pub fn writeObject(self: *ConfigBuildgen, name: []const u8, item: Config.Object)
     try self.writeField("max_rss", item.max_rss, .{});
     try self.writeField("use_llvm", item.use_llvm, .{});
     try self.writeField("use_lld", item.use_lld, .{});
-    try self.writeField("zig_lib_dir", try lazyPath(item.zig_lib_dir), .{ .quote_str = false });
+    try self.writeField(
+        "zig_lib_dir",
+        if (item.zig_lib_dir) |f| try self.resolveLazyPath(f, SourcesForModules) else null,
+        .{ .quote_str = false },
+    );
 
     try self.writeLn("}});", .{}, .{});
     try self.writer.writeAll("\n");
@@ -589,7 +684,11 @@ pub fn writeTest(self: *ConfigBuildgen, name: []const u8, item: Config.Test) !vo
     try self.writeField("max_rss", item.max_rss, .{});
     try self.writeField("use_llvm", item.use_llvm, .{});
     try self.writeField("use_lld", item.use_lld, .{});
-    try self.writeField("zig_lib_dir", try lazyPath(item.zig_lib_dir), .{ .quote_str = false });
+    try self.writeField(
+        "zig_lib_dir",
+        if (item.zig_lib_dir) |f| try self.resolveLazyPath(f, SourcesForModules) else null,
+        .{ .quote_str = false },
+    );
     try self.writeField("filters", try strSliceLiteral(item.filters), .{ .quote_str = false });
 
     try self.writeLn("}});", .{}, .{});
@@ -696,6 +795,7 @@ pub fn writeRun(self: *ConfigBuildgen, name: []const u8, item: Config.Run) !void
         },
         .{},
     );
+    try self.runs.put(name, item);
 }
 
 pub fn writeDependency(self: *ConfigBuildgen, name: []const u8, item: Config.Dependency) !void {
@@ -815,17 +915,6 @@ fn allocModuleId(self: *ConfigBuildgen, name: []const u8, item: Config.ModuleLin
 /// This is safe because only a single consumer of scratch exists at a time
 threadlocal var scratch: [4096]u8 = undefined;
 
-fn lazyPath(path: ?[]const u8) !?[]u8 {
-    if (path) |p| {
-        return try std.fmt.bufPrint(
-            &scratch,
-            "b.path(\"{s}\")",
-            .{p},
-        );
-    } else {
-        return null;
-    }
-}
 fn lazyPathSlice(paths_maybe: ?[][]const u8) !?[]u8 {
     if (paths_maybe) |paths| {
         var w = std.io.fixedBufferStream(&scratch);
@@ -958,19 +1047,134 @@ fn enumSliceLiteral(enum_name: []const u8, enum_slice: []const []const u8) ![]u8
 
 fn resolveImport(self: *ConfigBuildgen, import: []const u8) ![]const u8 {
     if (self.modules.contains(import)) {
-        return try std.fmt.bufPrint(&scratch, "b.modules.get(\"{s}\") orelse @panic(\"missing module {s}\")", .{ import, import });
+        return try fmtId("module", import);
     } else if (self.options_modules.contains(import)) {
         return try fmtId("options_module", import);
     } else if (self.dependencies.contains(import)) {
-        var buf: [4096]u8 = undefined;
-        var buf_a = std.heap.FixedBufferAllocator.init(&buf);
-        const alloc = buf_a.allocator();
+        const dep_id = try allocFmtId(self.allocator, "dep", import);
+        defer self.allocator.free(dep_id);
 
-        const dep_id = try alloc.dupe(u8, try fmtId("dep", import));
         return try std.fmt.bufPrint(&scratch, "{s}.module(\"{s}\")", .{ dep_id, import });
     } else {
+        // one last try, maybe it's a dependency with a custom module, eg "dep:module_a"
+        var parts = std.mem.splitScalar(u8, import, ':');
+        const first = parts.first();
+        if (self.dependencies.contains(first)) {
+            const dep_id = try allocFmtId(self.allocator, "dep", import);
+            defer self.allocator.free(dep_id);
+            return try std.fmt.bufPrint(&scratch, "{s}.module(\"{s}\")", .{ dep_id, parts.rest() });
+        }
+
         return try std.fmt.bufPrint(&scratch, "@panic(\"missing import {s}\")", .{import});
     }
+}
+
+const SourcesForWriteFiles = .{ .write_files, .dependencies, .options, .runs_output };
+const SourcesForOptions = .{ .write_files, .dependencies };
+const SourcesForModules = .{ .write_files, .dependencies, .options };
+
+/// Use colon delimiters to differentiate between
+/// - simple paths, eg "src/main.zig"
+/// - writefiles paths, eg "writefiles:src/main.zig"
+/// - TODO options paths, eg "options:foo"
+/// - dependency paths, both
+///   - named writefiles paths, eg "dep:writefiles:src/main.zig"
+///   - named lazypath paths, eg "dep:src/main.zig"
+/// Use sources to limit and order which sources to try
+/// - write_files, options, dependencies, runs_output
+fn resolveLazyPath(self: *ConfigBuildgen, path: []const u8, comptime sources: anytype) ![]const u8 {
+    comptime {
+        for (sources) |source| {
+            switch (source) {
+                .write_files, .options, .dependencies, .runs_output => {},
+                else => @compileError("Invalid source"),
+            }
+        }
+    }
+    var parts = std.mem.splitScalar(u8, path, ':');
+    const first = parts.first();
+    inline for (sources) |source| {
+        switch (source) {
+            .write_files => if (self.write_files.contains(first)) {
+                const write_files_id = try allocFmtId(self.allocator, "write_files", first);
+                defer self.allocator.free(write_files_id);
+
+                return try std.fmt.bufPrint(
+                    &scratch,
+                    "{s}.getDirectory().path(b, \"{s}\")",
+                    .{ write_files_id, parts.rest() },
+                );
+            },
+            .options => if (self.options.get(first)) |option| blk: {
+                if (!std.mem.eql(u8, option.type_name, "std.Build.LazyPath")) {
+                    break :blk;
+                }
+
+                const option_id = try allocFmtId(self.allocator, "option", first);
+                defer self.allocator.free(option_id);
+
+                if (option.optional) {
+                    return try std.fmt.bufPrint(
+                        &scratch,
+                        "{s} orelse @panic(\"missing option {s}\")",
+                        .{ option_id, first },
+                    );
+                } else {
+                    return try std.fmt.bufPrint(
+                        &scratch,
+                        "{s}",
+                        .{option_id},
+                    );
+                }
+            },
+            .dependencies => if (self.dependencies.contains(first)) blk: {
+                const dep_id = try allocFmtId(self.allocator, "dep", first);
+                defer self.allocator.free(dep_id);
+
+                const next = parts.next() orelse break :blk;
+                const last = parts.next();
+                // TODO there should be an error if there's even more data after?, eg dep:writefiles:src/main.zig:wtf_is_this
+
+                if (last) |l| {
+                    return try std.fmt.bufPrint(
+                        &scratch,
+                        "{s}.namedWriteFiles(\"{s}\").getDirectory().path(b, \"{s}\")",
+                        .{ dep_id, next, l },
+                    );
+                } else {
+                    return try std.fmt.bufPrint(
+                        &scratch,
+                        "{s}.namedLazyPath(\"{s}\")",
+                        .{ dep_id, next },
+                    );
+                }
+            },
+            .runs_output => blk: {
+                const prefix = if (self.executables.contains(first)) "run_exe" else if (self.runs.contains(first)) "run" else break :blk;
+                const run_id = try allocFmtId(self.allocator, prefix, first);
+                defer self.allocator.free(run_id);
+
+                const next = parts.next() orelse break :blk;
+                // TODO there should be an error if there's even more data after?, eg exe:captureStdOut:wtf_is_this
+
+                if (!std.mem.eql(u8, next, "captureStdOut") and !std.mem.eql(u8, next, "captureStdErr")) {
+                    break :blk;
+                }
+
+                return try std.fmt.bufPrint(
+                    &scratch,
+                    "{s}.{s}()",
+                    .{ run_id, next },
+                );
+            },
+            else => unreachable,
+        }
+    }
+    return try std.fmt.bufPrint(
+        &scratch,
+        "b.path(\"{s}\")",
+        .{path},
+    );
 }
 
 /// wrapper around std.zig.fmtId that includes a prefix string

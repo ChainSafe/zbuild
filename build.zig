@@ -19,16 +19,16 @@ pub fn build(b: *std.Build) void {
     });
 
     const install_exe_zbuild = b.addInstallArtifact(exe_zbuild, .{});
-    const install_tls_exe_zbuild = b.step("build-exe:zbuild", "Install the zbuild executable");
-    install_tls_exe_zbuild.dependOn(&install_exe_zbuild.step);
+    const tls_install_exe_zbuild = b.step("build-exe:zbuild", "Install the zbuild executable");
+    tls_install_exe_zbuild.dependOn(&install_exe_zbuild.step);
     b.getInstallStep().dependOn(&install_exe_zbuild.step);
 
     const run_exe_zbuild = b.addRunArtifact(exe_zbuild);
     if (b.args) |args| run_exe_zbuild.addArgs(args);
-    const run_tls_exe_zbuild = b.step("run:zbuild", "Run the zbuild executable");
-    run_tls_exe_zbuild.dependOn(&run_exe_zbuild.step);
+    const tls_run_exe_zbuild = b.step("run:zbuild", "Run the zbuild executable");
+    tls_run_exe_zbuild.dependOn(&run_exe_zbuild.step);
 
-    const run_tls_test = b.step("test", "Run all tests");
+    const tls_run_test = b.step("test", "Run all tests");
 
     const test_zbuild = b.addTest(.{
         .name = "zbuild",
@@ -36,13 +36,13 @@ pub fn build(b: *std.Build) void {
         .filters = &[_][]const u8{  },
     });
     const install_test_zbuild = b.addInstallArtifact(test_zbuild, .{});
-    const install_tls_test_zbuild = b.step("build-test:zbuild", "Install the zbuild test");
-    install_tls_test_zbuild.dependOn(&install_test_zbuild.step);
+    const tls_install_test_zbuild = b.step("build-test:zbuild", "Install the zbuild test");
+    tls_install_test_zbuild.dependOn(&install_test_zbuild.step);
 
     const run_test_zbuild = b.addRunArtifact(test_zbuild);
-    const run_tls_test_zbuild = b.step("test:zbuild", "Run the zbuild test");
-    run_tls_test_zbuild.dependOn(&run_test_zbuild.step);
-    run_tls_test.dependOn(&run_test_zbuild.step);
+    const tls_run_test_zbuild = b.step("test:zbuild", "Run the zbuild test");
+    tls_run_test_zbuild.dependOn(&run_test_zbuild.step);
+    tls_run_test.dependOn(&run_test_zbuild.step);
 
     const module_sync = b.createModule(.{
         .root_source_file = b.path("test/sync.zig"),
@@ -57,15 +57,15 @@ pub fn build(b: *std.Build) void {
         .filters = &[_][]const u8{  },
     });
     const install_test_sync = b.addInstallArtifact(test_sync, .{});
-    const install_tls_test_sync = b.step("build-test:sync", "Install the sync test");
-    install_tls_test_sync.dependOn(&install_test_sync.step);
+    const tls_install_test_sync = b.step("build-test:sync", "Install the sync test");
+    tls_install_test_sync.dependOn(&install_test_sync.step);
 
     const run_test_sync = b.addRunArtifact(test_sync);
-    const run_tls_test_sync = b.step("test:sync", "Run the sync test");
-    run_tls_test_sync.dependOn(&run_test_sync.step);
-    run_tls_test.dependOn(&run_test_sync.step);
+    const tls_run_test_sync = b.step("test:sync", "Run the sync test");
+    tls_run_test_sync.dependOn(&run_test_sync.step);
+    tls_run_test.dependOn(&run_test_sync.step);
 
-    const run_tls_fmt = b.step("fmt", "Run all fmts");
+    const tls_run_fmt = b.step("fmt", "Run all fmts");
 
     const fmt_all = b.addFmt(.{
         .paths = &[_][]const u8{ "src" },
@@ -73,10 +73,10 @@ pub fn build(b: *std.Build) void {
         .check = false,
     });
 
-    const run_tls_fmt_all = b.step("fmt:all", "Run the all fmt");
-    run_tls_fmt_all.dependOn(&fmt_all.step);
-    run_tls_fmt.dependOn(&fmt_all.step);
+    const tls_run_fmt_all = b.step("fmt:all", "Run the all fmt");
+    tls_run_fmt_all.dependOn(&fmt_all.step);
+    tls_run_fmt.dependOn(&fmt_all.step);
 
-    module_sync.addImport("zbuild", b.modules.get("zbuild") orelse @panic("missing module zbuild"));
+    module_sync.addImport("zbuild", module_zbuild);
 
 }

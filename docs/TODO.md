@@ -10,9 +10,9 @@
   - read file / write directory flags
 - [x] add init command
 - [x] add fetch command
+- [x] add named write files to Config
 
 - add named lazy paths to Config
-- add named write files to Config
 - add fuzz to Config
 - add additional module options, eg. addIncludePath
 - conditionals? template strings?
