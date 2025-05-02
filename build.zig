@@ -6,8 +6,6 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const dep_hashtree = b.dependency("hashtree", .{});
-
     const module_zbuild = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -69,5 +67,4 @@ pub fn build(b: *std.Build) void {
 
     module_sync.addImport("zbuild", module_zbuild);
 
-    _ = dep_hashtree;
 }

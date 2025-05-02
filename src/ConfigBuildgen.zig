@@ -1069,7 +1069,7 @@ fn resolveImport(self: *ConfigBuildgen, import: []const u8) ![]const u8 {
     }
 }
 
-const SourcesForWriteFiles = .{ .write_files, .dependencies, .options, .runs_output };
+const SourcesForWriteFiles = .{ .write_files, .dependencies, .options };
 const SourcesForOptions = .{ .write_files, .dependencies };
 const SourcesForModules = .{ .write_files, .dependencies, .options };
 
@@ -1148,24 +1148,6 @@ fn resolveLazyPath(self: *ConfigBuildgen, path: []const u8, comptime sources: an
                         .{ dep_id, next },
                     );
                 }
-            },
-            .runs_output => blk: {
-                const prefix = if (self.executables.contains(first)) "run_exe" else if (self.runs.contains(first)) "run" else break :blk;
-                const run_id = try allocFmtId(self.allocator, prefix, first);
-                defer self.allocator.free(run_id);
-
-                const next = parts.next() orelse break :blk;
-                // TODO there should be an error if there's even more data after?, eg exe:captureStdOut:wtf_is_this
-
-                if (!std.mem.eql(u8, next, "captureStdOut") and !std.mem.eql(u8, next, "captureStdErr")) {
-                    break :blk;
-                }
-
-                return try std.fmt.bufPrint(
-                    &scratch,
-                    "{s}.{s}()",
-                    .{ run_id, next },
-                );
             },
             else => unreachable,
         }
