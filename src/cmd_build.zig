@@ -1,13 +1,13 @@
 const std = @import("std");
 const mem = std.mem;
 const Allocator = mem.Allocator;
+const fatal = std.process.fatal;
 
 const Config = @import("Config.zig");
 const Args = @import("Args.zig");
 const GlobalOptions = @import("GlobalOptions.zig");
 const sync = @import("cmd_sync.zig");
 const runZigBuild = @import("run_zig.zig").runZigBuild;
-const fatal = @import("fatal.zig").fatal;
 
 /// Different kinds of zig build commands
 pub const BuildKind = enum {

@@ -28,13 +28,13 @@ pub fn exec(gpa: Allocator, arena: Allocator, global_opts: GlobalOptions) !void 
         .paths = &paths,
     };
 
-    try config.addExecutable(gpa, name, Config.Executable{ .root_module = .{ .value = .{ .module = .{
+    try config.addExecutable(gpa, name, Config.Executable{ .root_module = .{ .module = .{
         .root_source_file = "src/main.zig",
-    } } } });
+    } } });
 
     const zbuild_filename = try std.fs.path.join(gpa, &[_][]const u8{ cwd, global_opts.zbuild_file });
     defer gpa.free(zbuild_filename);
-    try config.save(zbuild_filename);
+    try config.serializeToFile(zbuild_filename);
 
     const src_dirname = try std.fs.path.join(gpa, &[_][]const u8{ cwd, "src" });
     defer gpa.free(src_dirname);

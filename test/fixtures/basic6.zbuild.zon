@@ -1,0 +1,17 @@
+.{
+    .name = .basic,
+    .version = "0.1.0",
+    .fingerprint = 0x90797553773ca567,
+    .minimum_zig_version = "0.14.0",
+    .paths = .{"src"},
+    .executables = .{
+        .exe_0 = .{
+            .root_module = .{
+                .root_source_file = "src/module_0/main.zig",
+            },
+        },
+    },
+    .runs = .{
+        .docs = "echo 'Generating documentation...'",
+    },
+}

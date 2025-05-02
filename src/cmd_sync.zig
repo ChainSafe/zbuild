@@ -1,9 +1,9 @@
 const std = @import("std");
 const mem = std.mem;
 const Allocator = std.mem.Allocator;
+const fatal = std.process.fatal;
 const GlobalOptions = @import("GlobalOptions.zig");
 const Config = @import("Config.zig");
-const fatal = @import("fatal.zig").fatal;
 const syncBuildFile = @import("sync_build_file.zig").syncBuildFile;
 const syncManifest = @import("sync_manifest.zig").syncManifest;
 

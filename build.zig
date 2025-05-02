@@ -6,6 +6,8 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const dep_hashtree = b.dependency("hashtree", .{});
+
     const module_zbuild = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -65,18 +67,7 @@ pub fn build(b: *std.Build) void {
     tls_run_test_sync.dependOn(&run_test_sync.step);
     tls_run_test.dependOn(&run_test_sync.step);
 
-    const tls_run_fmt = b.step("fmt", "Run all fmts");
-
-    const fmt_all = b.addFmt(.{
-        .paths = &[_][]const u8{ "src" },
-        .exclude_paths = &.{},
-        .check = false,
-    });
-
-    const tls_run_fmt_all = b.step("fmt:all", "Run the all fmt");
-    tls_run_fmt_all.dependOn(&fmt_all.step);
-    tls_run_fmt.dependOn(&fmt_all.step);
-
     module_sync.addImport("zbuild", module_zbuild);
 
+    _ = dep_hashtree;
 }

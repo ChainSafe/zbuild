@@ -8,6 +8,7 @@ const Save = @import("run_zig.zig").ZigCmd.Fetch.Save;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const cleanExit = std.process.cleanExit;
+const fatal = std.process.fatal;
 
 const usage_fetch =
     \\Usage: zbuild fetch [options] <url>
@@ -82,10 +83,9 @@ pub fn exec(
     gpa: Allocator,
     arena: Allocator,
     global_opts: GlobalOptions,
-    config: *Config,
     opts: Opts,
 ) !void {
-    const name = switch (opts.save) {
+    switch (opts.save) {
         .no => {
             // just run zig fetch, no need to update the config
             try runZigFetch(
@@ -98,75 +98,148 @@ pub fn exec(
             );
             return cleanExit();
         },
-        .yes => |name| name,
-        .exact => |name| name,
-    };
+        else => {},
+    }
 
     const zbuild_filename = try std.fs.path.join(gpa, &[_][]const u8{ global_opts.project_dir, global_opts.zbuild_file });
     defer gpa.free(zbuild_filename);
     const manifest_dir = try std.fs.cwd().openDir(global_opts.project_dir, .{});
     // if the name is known, we can update the config without loading the manifest
-    // otherwise, we first parse the manifest, run zig fetch, and then compare which dependency updated
-    // so we can determine the name
-    if (name) |n| {
-        try runZigFetch(
-            gpa,
-            arena,
-            .{ .cwd = global_opts.project_dir },
-            global_opts.getZigEnv(),
-            opts.path_or_url,
-            opts.save,
-        );
-        try config.addDependency(gpa, n, .{ .value = .{ .url = .{ .url = opts.path_or_url } } });
-        try config.save(zbuild_filename);
-    } else {
-        var old_manifest = try Manifest.load(gpa, arena, .{ .color = .auto, .dir = manifest_dir }) orelse fatal("failed to load manifest", .{});
-        defer old_manifest.deinit(gpa);
+    // we first parse the manifest, run zig fetch, and then compare which dependency updated
+    // then we update the config with the new dependency
+    var old_manifest = try Manifest.load(gpa, arena, .{ .color = .auto, .dir = manifest_dir, .basename = "build.zig.zon" }) orelse fatal("failed to load manifest", .{});
+    defer old_manifest.deinit(gpa);
 
-        try runZigFetch(
-            gpa,
-            arena,
-            .{ .cwd = global_opts.project_dir },
-            global_opts.getZigEnv(),
-            opts.path_or_url,
-            opts.save,
-        );
+    try runZigFetch(
+        gpa,
+        arena,
+        .{ .cwd = global_opts.project_dir },
+        global_opts.getZigEnv(),
+        opts.path_or_url,
+        opts.save,
+    );
 
-        var new_manifest = try Manifest.load(gpa, arena, .{ .color = .auto, .dir = manifest_dir }) orelse fatal("failed to load manifest", .{});
-        defer new_manifest.deinit(gpa);
+    var new_manifest = try Manifest.load(gpa, arena, .{ .color = .auto, .dir = manifest_dir, .basename = "build.zig.zon" }) orelse fatal("failed to load manifest", .{});
+    defer new_manifest.deinit(gpa);
 
-        for (new_manifest.dependencies.keys(), new_manifest.dependencies.values()) |n, new_dep| {
-            const config_dep = blk: switch (new_dep.location) {
-                .url => |new_url| {
-                    if (old_manifest.dependencies.get(n)) |old_dep| {
-                        if (old_dep.location == .url) {
-                            if (mem.eql(u8, new_url, old_dep.location.url)) {
-                                continue;
-                            }
+    for (new_manifest.dependencies.keys(), new_manifest.dependencies.values()) |n, new_dep| {
+        switch (new_dep.location) {
+            .url => |new_url| {
+                if (old_manifest.dependencies.get(n)) |old_dep| {
+                    if (old_dep.location == .url) {
+                        if (mem.eql(u8, new_url, old_dep.location.url)) {
+                            continue;
                         }
                     }
-                    break :blk Config.Dependency{ .value = .{ .url = .{ .url = new_url } } };
-                },
-                .path => |new_path| {
-                    if (old_manifest.dependencies.get(n)) |old_dep| {
-                        if (old_dep.location == .path) {
-                            if (mem.eql(u8, new_path, old_dep.location.path)) {
-                                continue;
-                            }
+                }
+            },
+            .path => |new_path| {
+                if (old_manifest.dependencies.get(n)) |old_dep| {
+                    if (old_dep.location == .path) {
+                        if (mem.eql(u8, new_path, old_dep.location.path)) {
+                            continue;
                         }
                     }
-                    break :blk Config.Dependency{ .value = .{ .path = .{ .path = new_path } } };
-                },
-            };
-            try config.addDependency(gpa, n, config_dep);
-            try config.save(zbuild_filename);
-            break;
+                }
+            },
         }
+        try updateConfigDependency(
+            gpa,
+            arena,
+            manifest_dir,
+            global_opts.zbuild_file,
+            n,
+            new_dep.location.url,
+            new_dep.hash,
+        );
+        break;
     }
     return cleanExit();
 }
 
-fn fatal(comptime format: []const u8, args: anytype) noreturn {
-    std.log.err(format, args);
-    std.process.exit(1);
+// Mostly copied from zig/src/main.zig
+// Allows us to update the config file with the new dependency without affecting comments and existing user formatting
+fn updateConfigDependency(
+    gpa: Allocator,
+    arena: Allocator,
+    dir: std.fs.Dir,
+    zbuild_file: []const u8,
+    dep_name: []const u8,
+    saved_path_or_url: []const u8,
+    package_hash_slice: ?[]const u8,
+) !void {
+    var manifest = Manifest.load(
+        gpa,
+        arena,
+        .{
+            .color = .auto,
+            .dir = dir,
+            .basename = zbuild_file,
+        },
+    ) catch |err| {
+        fatal("unable to open {s} file: {s}", .{ zbuild_file, @errorName(err) });
+    } orelse fatal("{s} file not found", .{zbuild_file});
+    defer manifest.deinit(gpa);
+
+    var fixups: std.zig.Ast.Fixups = .{};
+    defer fixups.deinit(gpa);
+
+    const new_node_init =
+        try std.fmt.allocPrint(arena,
+            \\.{{
+            \\            .url = "{}",
+            \\        }}
+        , .{
+            std.zig.fmtEscapes(saved_path_or_url),
+        });
+
+    const new_node_text = try std.fmt.allocPrint(arena, ".{p_} = {s},\n", .{
+        std.zig.fmtId(dep_name), new_node_init,
+    });
+
+    const dependencies_init = try std.fmt.allocPrint(arena, ".{{\n        {s}    }}", .{
+        new_node_text,
+    });
+
+    const dependencies_text = try std.fmt.allocPrint(arena, ".dependencies = {s},\n", .{
+        dependencies_init,
+    });
+
+    if (manifest.dependencies.get(dep_name)) |dep| {
+        const location_replace = try std.fmt.allocPrint(
+            arena,
+            "\"{}\"",
+            .{std.zig.fmtEscapes(saved_path_or_url)},
+        );
+        try fixups.replace_nodes_with_string.put(gpa, dep.location_node, location_replace);
+
+        if (package_hash_slice) |hash| {
+            const hash_replace = try std.fmt.allocPrint(
+                arena,
+                "\"{}\"",
+                .{std.zig.fmtEscapes(hash)},
+            );
+
+            try fixups.replace_nodes_with_string.put(gpa, dep.hash_node, hash_replace);
+        }
+    } else if (manifest.dependencies.count() > 0) {
+        // Add fixup for adding another dependency.
+        const deps = manifest.dependencies.values();
+        const last_dep_node = deps[deps.len - 1].node;
+        try fixups.append_string_after_node.put(gpa, last_dep_node, new_node_text);
+    } else if (manifest.dependencies_node != 0) {
+        // Add fixup for replacing the entire dependencies struct.
+        try fixups.replace_nodes_with_string.put(gpa, manifest.dependencies_node, dependencies_init);
+    } else {
+        // Add fixup for adding dependencies struct.
+        try fixups.append_string_after_node.put(gpa, manifest.version_node, dependencies_text);
+    }
+
+    var rendered = std.ArrayList(u8).init(gpa);
+    defer rendered.deinit();
+    try manifest.ast.renderToArrayList(&rendered, fixups);
+
+    dir.writeFile(.{ .sub_path = zbuild_file, .data = rendered.items }) catch |err| {
+        fatal("unable to write {s} file: {s}", .{ zbuild_file, @errorName(err) });
+    };
 }

@@ -10,7 +10,6 @@ const testing = std.testing;
 const Package = @import("Package.zig");
 
 pub const max_bytes = 10 * 1024 * 1024;
-pub const basename = "build.zig.zon";
 pub const max_name_len = 32;
 pub const max_version_len = 32;
 
@@ -63,6 +62,7 @@ pub const Error = Allocator.Error;
 
 pub const LoadManifestOptions = struct {
     dir: std.fs.Dir,
+    basename: []const u8,
     color: Color,
 };
 
@@ -73,7 +73,7 @@ pub fn load(
 ) !?Manifest {
     const manifest_bytes = options.dir.readFileAllocOptions(
         arena,
-        Manifest.basename,
+        options.basename,
         Manifest.max_bytes,
         null,
         1,
@@ -86,7 +86,7 @@ pub fn load(
     errdefer ast.deinit(gpa);
 
     if (ast.errors.len > 0) {
-        try std.zig.printAstErrorsToStderr(gpa, ast, Manifest.basename, options.color);
+        try std.zig.printAstErrorsToStderr(gpa, ast, options.basename, options.color);
         return error.InvalidManifest;
     }
 
@@ -98,7 +98,7 @@ pub fn load(
         try wip_errors.init(gpa);
         defer wip_errors.deinit();
 
-        const src_path = try wip_errors.addString(Manifest.basename);
+        const src_path = try wip_errors.addString(options.basename);
         try manifest.copyErrorsIntoBundle(ast, src_path, &wip_errors);
 
         var error_bundle = try wip_errors.toOwnedBundle("");

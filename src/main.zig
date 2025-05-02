@@ -13,7 +13,7 @@ pub const init = @import("cmd_init.zig");
 pub const fetch = @import("cmd_fetch.zig");
 pub const build = @import("cmd_build.zig");
 pub const sync = @import("cmd_sync.zig");
-const fatal = @import("fatal.zig").fatal;
+const fatal = std.process.fatal;
 
 const usage =
     \\Usage: zbuild [global_options] [command] [options]
@@ -88,19 +88,29 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: *Args) !void {
     const global_opts = try GlobalOptions.parseArgs(gpa, args);
     defer global_opts.deinit(gpa);
 
-    const cmd = args.next() orelse unreachable;
+    const cmd = args.next() orelse {
+        cmdUsage();
+        fatal("expected command argument", .{});
+    };
 
     if (mem.eql(u8, cmd, "init")) {
         try init.exec(gpa, arena, global_opts);
         return;
     }
 
-    var config = Config.load(arena, global_opts.zbuild_file) catch |err| switch (err) {
+    var wip_bundle: std.zig.ErrorBundle.Wip = undefined;
+    try wip_bundle.init(gpa);
+    const config = Config.parseFromFile(arena, global_opts.zbuild_file, &wip_bundle) catch |err| switch (err) {
         error.FileNotFound => {
             fatal("no zbuild file found", .{});
         },
+        error.OutOfMemory => {
+            fatal("out of memory", .{});
+        },
         else => {
-            fatal("error parsing zbuild file: {s}", .{@errorName(err)});
+            var error_bundle = try wip_bundle.toOwnedBundle("");
+            error_bundle.renderToStdErr(.{ .ttyconf = .escape_codes });
+            std.process.exit(1);
         },
     };
 
@@ -111,7 +121,6 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: *Args) !void {
             gpa,
             arena,
             global_opts,
-            &config,
             try fetch.parseArgs(args),
         );
     } else {

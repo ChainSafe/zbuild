@@ -2,7 +2,7 @@
 
 ## Why zbuild?
 
-The Zig programming language offers a powerful and flexible build system integrated directly into its toolchain via `build.zig` files. This system, while highly customizable and programmatic, can become complex and verbose for larger projects or for developers who prefer a declarative approach to configuration. `zbuild` was created to address these challenges by providing an opinionated, JSON-based alternative to Zig's native build system, aiming to streamline the build process while retaining the power of Zig’s capabilities.
+The Zig programming language offers a powerful and flexible build system integrated directly into its toolchain via `build.zig` files. This system, while highly customizable and programmatic, can become complex and verbose for larger projects or for developers who prefer a declarative approach to configuration. `zbuild` was created to address these challenges by providing an opinionated, ZON-based alternative to Zig's native build system, aiming to streamline the build process while retaining the power of Zig’s capabilities.
 
 The motivation behind `zbuild` stems from a desire to improve the developer experience for Zig projects, making it easier to define, manage, and share build configurations without sacrificing the language’s strengths. Here’s why `zbuild` exists and what it seeks to achieve:
 
@@ -28,7 +28,7 @@ Without a standardized structure, different Zig projects may adopt wildly differ
 - Share build configurations with the community.
 
 ### 4. Limited Tooling Integration
-While Zig’s build system is powerful, its programmatic nature doesn’t lend itself easily to integration with external tools like IDEs or CI/CD pipelines, which often expect structured configuration files (e.g., JSON or YAML) for validation, autocompletion, or automation.
+While Zig’s build system is powerful, its programmatic nature doesn’t lend itself easily to integration with external tools like IDEs or CI/CD pipelines, which often expect structured configuration files (e.g., JSON or YAML) for validation, autocompletion, or automation. While ZON is still nascent, its smaller feature surface fits well.
 
 ---
 
@@ -37,7 +37,7 @@ While Zig’s build system is powerful, its programmatic nature doesn’t lend i
 `zbuild` aims to address these issues by introducing a layer of abstraction over Zig’s build system, guided by the following goals:
 
 ### 1. Simplify Build Definition
-By using a JSON-based configuration file (`zbuild.json`), `zbuild` allows developers to declaratively specify their project’s components—dependencies, modules, executables, libraries, tests, and more—without writing Zig code. This reduces the cognitive load and makes build setup accessible to developers who may not be Zig experts.
+By using a ZON-based configuration file (`zbuild.zon`), `zbuild` allows developers to declaratively specify their project’s components—dependencies, modules, executables, libraries, tests, and more—without writing Zig code. This reduces the cognitive load and makes build setup accessible to developers who may not be Zig experts.
 
 For example, instead of writing:
 
@@ -82,19 +82,20 @@ pub fn build(b: *std.Build) void {
 
 
 You can define:
-```json
-{
-  "name": "project",
-  "version": "0.1.0",
-  "fingerprint": "0xdeadbeefdeadbeef",
-  "minimum_zig_version": "0.14.0",
-  "executables": {
-    "myapp": {
-      "root_module": {
-        "root_source_file": "src/main.zig"
-      }
+```zon
+.{
+    .name = .project,
+    .version = "0.1.0",
+    .fingerprint = 0xdeadbeefdeadbeef,
+    .minimum_zig_version = "0.14.0",
+    .paths = .{ "build.zig", "build.zig.zon", "src" },
+    .executables = .{
+        .myapp = .{
+            .root_module = .{
+                .root_source_file = "src/main.zig",
+            }
+        }
     }
-  }
 }
 ```
 
@@ -104,15 +105,12 @@ And let `zbuild` generate the necessary `build.zig`.
 `zbuild` automates repetitive tasks like creating install steps, run commands, and tests for each target. It enforces a consistent structure, eliminating the need to manually replicate common patterns across projects.
 
 ### 3. Enhance Readability and Maintainability
-A JSON configuration is inherently more readable and diff-friendly than a programmatic script. It’s easier to see at a glance what a project builds, what it depends on, and how it’s configured. This also simplifies maintenance, as changes to the build setup are more predictable and less error-prone.
+A ZON configuration is inherently more readable and diff-friendly than a programmatic script. It’s easier to see at a glance what a project builds, what it depends on, and how it’s configured. This also simplifies maintenance, as changes to the build setup are more predictable and less error-prone.
 
-### 4. Enable Tooling Support
-The zbuild.json format, paired with a JSON schema (extension/schema.json), enables integration with editors like VSCode for autocompletion, validation, and error checking. This structured format also makes it feasible to integrate with CI/CD systems or other tools that parse configuration files.
-
-### 5. Preserve Zig’s Power
+### 4. Preserve Zig’s Power
 While zbuild introduces a declarative layer, it doesn’t abandon Zig’s flexibility. It generates a build.zig file that can be customized further if needed, allowing developers to drop down to the native build system for advanced use cases. The generated file serves as a starting point, not a limitation.
 
-### 6. Foster a Standard Build Workflow
+### 5. Foster a Standard Build Workflow
 By providing an opinionated structure, zbuild encourages a consistent build workflow across Zig projects. This standardization can lower the barrier to entry for new contributors and make it easier to share build configurations or adopt best practices.
 
 ## Usecases
@@ -120,7 +118,7 @@ By providing an opinionated structure, zbuild encourages a consistent build work
 `zbuild` is particularly valuable for:
 - **Beginners**: Developers new to Zig can define builds without learning the intricacies of build.zig.
 - **Large Projects**: Teams managing multiple targets (executables, libraries, tests) benefit from a centralized, declarative configuration.
-- **Open-Source Projects**: A readable `zbuild.json` makes it easier for contributors to understand and modify the build setup.
+- **Open-Source Projects**: A readable `zbuild.zon` makes it easier for contributors to understand and modify the build setup.
 
 ## Trade-Offs
 Introducing `zbuild` comes with trade-offs:
@@ -140,11 +138,8 @@ Unlike these tools, `zbuild` is tailored to Zig’s unique ecosystem, leveraging
 `zbuild` aspires to become an indispensable companion in the Zig ecosystem, evolving beyond its current foundation to empower developers at every level. Its high-level ambitions include:
 
 - **Democratizing Zig Development**: Lower the barrier to entry with an intuitive, welcoming build experience, empowering newcomers and seasoned developers alike to embrace Zig’s potential.
+- **Full Feature Parity**: Support all build.zig capabilities (e.g., depends_on, custom steps).
 - **Seamless Build Excellence**: Evolve into a tool that effortlessly harnesses Zig’s full build capabilities, turning complexity into simplicity and fueling rapid project creation.
 - **Thriving Zig Ecosystem**: Catalyze a flourishing community by streamlining dependency management and fostering collaboration, driving widespread adoption 
-
-
-- ****
-- **Full Feature Parity**: Support all build.zig capabilities (e.g., depends_on, custom steps).
 
 By alleviating the complexities of Zig’s build system while embracing its strengths, zbuild seeks to empower developers, making project setup and maintenance intuitive and efficient.

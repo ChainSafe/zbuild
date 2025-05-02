@@ -9,12 +9,12 @@ const remove_build_file = true;
 const cwd = "test";
 
 const test_cases = &[_][]const u8{
-    "fixtures/basic1.zbuild.json",
-    "fixtures/basic2.zbuild.json",
-    "fixtures/basic3.zbuild.json",
-    "fixtures/basic4.zbuild.json",
-    "fixtures/basic5.zbuild.json",
-    "fixtures/basic6.zbuild.json",
+    "fixtures/basic1.zbuild.zon",
+    "fixtures/basic2.zbuild.zon",
+    "fixtures/basic3.zbuild.zon",
+    "fixtures/basic4.zbuild.zon",
+    "fixtures/basic5.zbuild.zon",
+    "fixtures/basic6.zbuild.zon",
 };
 
 fn maybeCleanup(should_cleanup: bool) void {
@@ -31,7 +31,7 @@ fn maybeCleanup(should_cleanup: bool) void {
 fn testSync(gpa: Allocator, arena: Allocator, should_cleanup: bool, global_opts: zbuild.GlobalOptions) !void {
     defer maybeCleanup(should_cleanup);
 
-    const config = try zbuild.Config.load(arena, global_opts.zbuild_file);
+    const config = try zbuild.Config.parseFromFile(arena, global_opts.zbuild_file, null);
 
     try zbuild.build.exec(
         gpa,

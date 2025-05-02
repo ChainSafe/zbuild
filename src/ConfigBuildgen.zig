@@ -67,31 +67,31 @@ pub fn write(self: *ConfigBuildgen) !void {
     // add all config items without linking depends_on, lazy paths, or imports
 
     if (self.config.dependencies) |dependencies| {
-        try self.writeItems(Config.Dependency, writeDependency, dependencies.map);
+        try self.writeItems(Config.Dependency, writeDependency, dependencies);
     }
     if (self.config.write_files) |write_files| {
-        try self.writeItems(Config.WriteFile, writeWriteFile, write_files.map);
+        try self.writeItems(Config.WriteFile, writeWriteFile, write_files);
     }
     if (self.config.options) |options| {
-        try self.writeItems(Config.Option, writeOption, options.map);
+        try self.writeItems(Config.Option, writeOption, options);
     }
     if (self.config.options_modules) |options_modules| {
-        try self.writeItems(Config.OptionsModule, writeOptionsModule, options_modules.map);
+        try self.writeItems(Config.OptionsModule, writeOptionsModule, options_modules);
     }
     if (self.config.modules) |modules| {
-        try self.writeItems(Config.Module, writeModule, modules.map);
+        try self.writeItems(Config.Module, writeModule, modules);
     }
     if (self.config.executables) |executables| {
-        try self.writeItems(Config.Executable, writeExecutable, executables.map);
+        try self.writeItems(Config.Executable, writeExecutable, executables);
     }
     if (self.config.libraries) |libraries| {
-        try self.writeItems(Config.Library, writeLibrary, libraries.map);
+        try self.writeItems(Config.Library, writeLibrary, libraries);
     }
     if (self.config.objects) |objects| {
-        try self.writeItems(Config.Object, writeObject, objects.map);
+        try self.writeItems(Config.Object, writeObject, objects);
     }
 
-    if ((self.config.tests != null and self.config.tests.?.map.count() > 0) or self.modules.count() > 0) {
+    if ((self.config.tests != null and self.config.tests.?.count() > 0) or self.modules.count() > 0) {
         try self.writeLn(
             \\const tls_run_test = b.step("test", "Run all tests");
             \\
@@ -99,50 +99,50 @@ pub fn write(self: *ConfigBuildgen) !void {
     }
     // ensure a test is created for every module in the project, not just explicitly defined tests
     for (self.modules.keys()) |name| {
-        if (self.config.tests == null or !self.config.tests.?.map.contains(name)) {
+        if (self.config.tests == null or !self.config.tests.?.contains(name)) {
             try self.writeTest(name, .{
-                .root_module = .{ .value = .{ .name = name } },
+                .root_module = .{ .name = name },
                 .filters = &.{},
             });
             try self.writer.writeAll("\n");
         }
     }
     if (self.config.tests) |tests| {
-        try self.writeItems(Config.Test, writeTest, tests.map);
+        try self.writeItems(Config.Test, writeTest, tests);
     }
     if (self.config.fmts) |fmts| {
         try self.writeLn(
             \\const tls_run_fmt = b.step("fmt", "Run all fmts");
             \\
         , .{}, .{});
-        try self.writeItems(Config.Fmt, writeFmt, fmts.map);
+        try self.writeItems(Config.Fmt, writeFmt, fmts);
     }
     if (self.config.runs) |runs| {
-        try self.writeItems(Config.Run, writeRun, runs.map);
+        try self.writeItems(Config.Run, writeRun, runs);
     }
 
     // add files/dirs to write files
 
     if (self.config.write_files) |write_files| {
-        try self.writeItems(Config.WriteFile, writeWriteFileItems, write_files.map);
+        try self.writeItems(Config.WriteFile, writeWriteFileItems, write_files);
     }
 
     // link all imports
 
     if (self.config.modules) |modules| {
-        try self.writeImports(Config.Module, modules.map);
+        try self.writeImports(Config.Module, modules);
     }
     if (self.config.executables) |executables| {
-        try self.writeImports(Config.Executable, executables.map);
+        try self.writeImports(Config.Executable, executables);
     }
     if (self.config.libraries) |libraries| {
-        try self.writeImports(Config.Library, libraries.map);
+        try self.writeImports(Config.Library, libraries);
     }
     if (self.config.objects) |objects| {
-        try self.writeImports(Config.Object, objects.map);
+        try self.writeImports(Config.Object, objects);
     }
     if (self.config.tests) |tests| {
-        try self.writeImports(Config.Test, tests.map);
+        try self.writeImports(Config.Test, tests);
     }
     // make sure all unused variables are used
     // target and optimize that aren't used (when all modules define them)
@@ -203,7 +203,7 @@ fn writeItems(
     self: *ConfigBuildgen,
     comptime T: type,
     comptime writeItem: fn (*ConfigBuildgen, []const u8, T) anyerror!void,
-    items: std.StringArrayHashMapUnmanaged(T),
+    items: std.StringArrayHashMap(T),
 ) !void {
     const names = items.keys();
     const values = items.values();
@@ -216,7 +216,7 @@ fn writeItems(
 fn writeImports(
     self: *ConfigBuildgen,
     comptime T: type,
-    items: std.StringArrayHashMapUnmanaged(T),
+    items: std.StringArrayHashMap(T),
 ) !void {
     const keys = items.keys();
     const values = items.values();
@@ -224,7 +224,7 @@ fn writeImports(
         const imports = switch (T) {
             Config.Module => item.imports orelse continue,
             else => blk: {
-                const module_config = switch (item.root_module.value) {
+                const module_config = switch (item.root_module) {
                     .module => |m| m,
                     .name => continue,
                 };
@@ -258,8 +258,8 @@ pub fn writeWriteFileItems(self: *ConfigBuildgen, name: []const u8, item: Config
     defer self.allocator.free(write_files_id);
 
     if (item.items) |items| {
-        for (items.map.keys(), items.map.values()) |key, value| {
-            switch (value.value) {
+        for (items.keys(), items.values()) |key, value| {
+            switch (value) {
                 .file => |f| {
                     try self.writeLn(
                         \\_ = {s}.addCopyFile({s}, "{s}");
@@ -288,7 +288,7 @@ pub fn writeWriteFileItems(self: *ConfigBuildgen, name: []const u8, item: Config
 }
 
 pub fn writeOption(self: *ConfigBuildgen, name: []const u8, item: Config.Option) !void {
-    const t, const default, const description = blk: switch (item.value) {
+    const t, const default, const description = blk: switch (item) {
         .bool => |b| {
             break :blk .{
                 "bool",
@@ -395,7 +395,7 @@ pub fn writeOptionsModule(self: *ConfigBuildgen, name: []const u8, item: Config.
         .{},
     );
 
-    for (item.map.keys(), item.map.values()) |option_name, value| {
+    for (item.keys(), item.values()) |option_name, value| {
         try self.writeOption(option_name, value);
         const option = self.options.get(option_name) orelse return error.MissingOption;
         const option_id = try allocFmtId(self.allocator, "option", option_name);
@@ -899,7 +899,7 @@ fn allocModuleId(self: *ConfigBuildgen, name: []const u8, item: Config.ModuleLin
     return try allocFmtId(
         self.allocator,
         "module",
-        switch (item.value) {
+        switch (item) {
             .name => |n| n,
             .module => |m| blk: {
                 const n = m.name orelse name;

@@ -11,14 +11,12 @@
 - [x] add init command
 - [x] add fetch command
 - [x] add named write files to Config
+- [x] make ~~json~~zon parsing errors friendly
 
 - add named lazy paths to Config
 - add fuzz to Config
 - add additional module options, eg. addIncludePath
 - conditionals? template strings?
 - implement depends_on and test_runner
-- refresh json schema
-
 - lots of tests
 
-- make json parsing errors friendly

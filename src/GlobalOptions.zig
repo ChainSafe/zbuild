@@ -5,7 +5,7 @@ const mem = std.mem;
 const Allocator = std.mem.Allocator;
 const Args = @import("Args.zig");
 const ZigEnv = @import("ZigEnv.zig");
-const fatal = @import("fatal.zig").fatal;
+const fatal = std.process.fatal;
 
 const GlobalOptions = @This();
 
@@ -49,7 +49,7 @@ pub fn parseArgs(allocator: Allocator, args: *Args) !GlobalOptions {
         .global_cache_dir = zig_env.global_cache_dir,
         .version = zig_env.version,
         .project_dir = try allocator.dupe(u8, "."),
-        .zbuild_file = try allocator.dupe(u8, "zbuild.json"),
+        .zbuild_file = try allocator.dupe(u8, "zbuild.zon"),
         .no_sync = false,
     };
 

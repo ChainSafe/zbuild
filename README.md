@@ -4,17 +4,16 @@ An opinionated build tool for Zig projects.
 
 ## Introduction
 
-`zbuild` is a command-line build tool designed to simplify and enhance the build process for Zig projects. It leverages a JSON-based configuration file (`zbuild.json`) to define project builds declaratively, generating a corresponding `build.zig` and `build.zig.zon` file that integrates seamlessly with Zig’s native build system. This approach reduces the complexity of writing and maintaining Zig build scripts manually, offering a structured alternative for managing dependencies, modules, executables, libraries, tests, and more.
+`zbuild` is a command-line build tool designed to simplify and enhance the build process for Zig projects. It leverages a ZON-based configuration file (`zbuild.zon`) to define project builds declaratively, generating a corresponding `build.zig` and `build.zig.zon` file that integrates seamlessly with Zig’s native build system. This approach reduces the complexity of writing and maintaining Zig build scripts manually, offering a structured alternative for managing dependencies, modules, executables, libraries, tests, and more.
 
 Note: `zbuild` is under active development. Some features are incomplete or subject to change. Check the `docs/TODO.md` file for planned enhancements.
 
 ## Features
 
-- **JSON-based Configuration**: Define your build in a `zbuild.json` file instead of writing Zig code directly.
+- **ZON-based Configuration**: Define your build in a `zbuild.zon` file instead of writing Zig code directly.
 - **Automatic build.zig Generation**: Create a `build.zig` and `build.zig.zon` file from your configuration.
 - **Comprehensive Build Support**: Manage dependencies, modules, executables, libraries, objects, tests, formatting, and run commands.
 - **Command-Line Interface**: Execute common build tasks like compiling executables, running tests, and formatting code.
-- **IDE Support**: Includes a JSON schema (`extension/schema.json`) for validating `zbuild.json` in editors like VSCode.
 
 ## Installation
 
@@ -48,13 +47,13 @@ Usage: zbuild [global_options] [command] [options]
 
 ### Commands
 
-- `init`: Initialize a new Zig project with a basic `zbuild.json`, `build.zig`, `build.zig.zon`, and `src/main.zig` in the current directory.
-- `fetch`: Copy a package into the global cache  and optionally add it to `zbuild.json` and `build.zig.zon`
-- `install`: Install all artifacts defined in `zbuild.json`.
+- `init`: Initialize a new Zig project with a basic `zbuild.zon`, `build.zig`, `build.zig.zon`, and `src/main.zig` in the current directory.
+- `fetch`: Copy a package into the global cache  and optionally add it to `zbuild.zon` and `build.zig.zon`
+- `install`: Install all artifacts defined in `zbuild.zon`.
 - `uninstall`: Uninstall all artifacts.
-- `sync`: Synchronize `build.zig` and `build.zig.zon` with `zbuild.json`.
+- `sync`: Synchronize `build.zig` and `build.zig.zon` with `zbuild.zon`.
 - `build`: Run `zig build` with the generated `build.zig`.
-- `build-exe <name>`: Build a specific executable defined in `zbuild.json`.
+- `build-exe <name>`: Build a specific executable defined in `zbuild.zon`.
 - `build-lib <name>`: Build a specific library.
 - `build-obj <name>`: Build a specific object file.
 - `build-test <name>`: Build a specific test into an executable.
@@ -67,7 +66,7 @@ Usage: zbuild [global_options] [command] [options]
 ### Global Options
 
 - `--project-dir <path>`: Set the project directory (default: `.`).
-- `--zbuild-file <path>`: Specify the configuration file (default: `zbuild.json`).
+- `--zbuild-file <path>`: Specify the configuration file (default: `zbuild.zon`).
 - `--no-sync`: Skip automatic synchronization of `build.zig` and `build.zig.zon`.
 
 ### General Options
@@ -78,85 +77,84 @@ For command-specific options (e.g., `fetch`), use zbuild <command> --help.
 
 ## Configuration
 
-The `zbuild.json` file is the heart of the zbuild system. It defines your project’s structure and build settings. Below is an example configuration:
+The `zbuild.zon` file is the heart of the zbuild system. It defines your project’s structure and build settings. Below is an example configuration:
 
-```json
-{
-  "name": "example_project",
-  "version": "1.2.3",
-  "description": "A comprehensive example",
-  "fingerprint": "0x90797553773ca567",
-  "minimum_zig_version": "0.14.0",
-  "keywords": ["example"],
-  "dependencies": {
-    "mathlib": {
-      "path": "deps/mathlib"
+```zon
+.{
+    .name = .example_project,
+    .version = "1.2.3",
+    .description = "A comprehensive example",
+    .fingerprint = 0x90797553773ca567,
+    .minimum_zig_version = "0.14.0",
+    .paths = .{ "build.zig", "build.zig.zon", "src" },
+    .keywords = .{"example"},
+    .dependencies = .{
+        .mathlib = .{
+            .path = "deps/mathlib",
+        },
+        .network = .{
+            .url = "https://github.com/example/network/archive/v1.0.0.tar.gz",
+        },
     },
-    "network": {
-      "url": "https://github.com/example/network/archive/v1.0.0.tar.gz"
-    }
-  },
-  "options_modules": {
-    "build_options": {
-      "max_depth": {
-        "type": "usize",
-        "default": 100
-      },
-    }
-  },
-  "modules": {
-    "utils": {
-      "root_source_file": "src/utils/main.zig",
-      "imports": ["mathlib", "build_options"],
-      "link_libc": true
+    .options_modules = .{
+        .build_options = .{
+            .max_depth = .{
+                .type = "usize",
+                .default = 100,
+            },
+        },
     },
-    "core": {
-      "root_source_file": "src/core/core.zig",
-      "imports": ["utils"]
-    }
-  },
-  "executables": {
-    "main_app": {
-      "root_module": {
-        "root_source_file": "src/main.zig",
-        "imports": ["core", "network"]
-      }
-    }
-  },
-  "libraries": {
-    "libmath": {
-      "version": "0.1.0",
-      "root_module": "utils",
-      "linkage": "static",
-    }
-  },
-  "tests": {
-    "unit_tests": {
-      "name": "unit_tests",
-      "root_module": {
-        "root_source_file": "tests/unit.zig",
-        "imports": ["core", "utils"]
-      }
-    }
-  },
-  "fmts": {
-    "source": {
-      "paths": ["src", "tests"],
-      "exclude_paths": ["src/generated"],
-      "check": true
-    }
-  },
-  "runs": {
-    "start_server": "zig run src/server.zig",
-    "build_docs": "scripts/build_docs.sh"
-  }
+    .modules = .{
+        .utils = .{
+            .root_source_file = "src/utils/main.zig",
+            .imports = .{.mathlib, .build_options},
+            .link_libc = true,
+        },
+        .core = .{
+            .root_source_file = "src/core/core.zig",
+            .imports = .{.utils},
+        },
+    },
+    .executables = .{
+        .main_app = .{
+            .root_module = .{
+                .root_source_file = "src/main.zig",
+                .imports = .{.core, .network},
+            },
+        },
+    },
+    .libraries = .{
+        .libmath = .{
+            .version = "0.1.0",
+            .root_module = .utils,
+            .linkage = .static,
+        },
+    },
+    .tests = .{
+        .unit_tests = .{
+            .root_module = .{
+                .root_source_file = "tests/unit.zig",
+                .imports = .{.core, .utils},
+            },
+        },
+    },
+    .fmts = .{
+        .source = .{
+            .paths = .{"src", "tests"},
+            .exclude_paths = .{"src/generated"},
+            .check = true,
+        },
+    },
+    .runs = .{
+        .start_server = "zig run src/server.zig",
+        .build_docs = "scripts/build_docs.sh",
+    },
 }
 ```
 
 ### Key Sections
 
-- `name`, `version`, `fingerprint`, `minimum_zig_version`: Project metadata (required).
-- `paths`: Files/directories included in dependency hashing (optional, defaults to `["build.zig", "build.zig.zon", "src"]`).
+- `name`, `version`, `fingerprint`, `minimum_zig_version`, `paths`: Project metadata (required).
 - `dependencies`: External packages (path or URL).
 - `options_modules`: Configurable build options bundled into modules.
 - `modules`: Reusable code units with optional imports and build settings.
@@ -164,8 +162,6 @@ The `zbuild.json` file is the heart of the zbuild system. It defines your projec
 - `tests`: Test targets with optional filters.
 - `fmts`: Code formatting rules.
 - `runs`: Custom shell commands.
-
-For a full list of configuration options, refer to the schema.json (`extension/schema.json`) file, which provides detailed validation rules for zbuild.json. This schema can be used in editors like VSCode for autocompletion and error checking.
 
 ## Hello World Example
 
@@ -179,20 +175,22 @@ cd myproject
 zbuild init
 ```
 
-2. (Optional) Inspect `zbuild.json`
+2. (Optional) Inspect `zbuild.zon`
 
-```json
-{
-  "name": "myproject",
-  "version": "0.1.0",
-  "fingerprint": "0x<generated>",
-  "minimum_zig_version": "<zig-version>",
-  "paths": ["build.zig", "build.zig.zon", "src"],
-  "executables": {
-    "myproject": {
-      "root_module": { "root_source_file": "src/main.zig" }
-    }
-  }
+```zon
+.{
+    .name = .myproject,
+    .version = "0.1.0",
+    .fingerprint = 0x<generated>,
+    .minimum_zig_version = "0.14.0",
+    .paths = .{ "build.zig", "build.zig.zon", "src" },
+    .executables = .{
+        .myproject = .{
+            .root_module = .{
+                .root_source_file = "src/main.zig",
+            },
+        },
+    },
 }
 ```
 
@@ -207,6 +205,7 @@ pub fn main() !void {
     const arg = if (args.len >= 2) args[1] else "zbuild";
     std.debug.print("Hello {s}!\n", .{arg});
 }
+```
 
 4. (Optional) Build the Executable:
 
@@ -230,10 +229,12 @@ Add a dependency to your project:
 zbuild fetch --save=example https://github.com/example/repo/archive/v1.0.0.tar.gz
 ```
 
-This updates `zbuild.json` with:
-```json
-"dependencies": {
-  "example": { "url": "https://github.com/example/repo/archive/v1.0.0.tar.gz" }
+This updates `zbuild.zon` with:
+```zon
+.dependencies = .{
+    .example = {
+        .url = "https://github.com/example/repo/archive/v1.0.0.tar.gz,
+    }
 }
 ```
 

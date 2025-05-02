@@ -8,35 +8,36 @@ The `write_files` feature in `zbuild` allows you to define sets of files or dire
 The `write_files` field is an object where each key is a named set of files, and the value defines the files or directories to include. Each entry can be marked as `private` (accessible only within the build script) or public (installable as part of the build output). The `items` field specifies the source paths and their destinations.
 Here’s an example `zbuild.json` snippet:
 
-```json
-{
-  "name": "myproject",
-  "version": "0.1.0",
-  "fingerprint": "0x90797553773ca567",
-  "minimum_zig_version": "0.14.0",
-  "write_files": {
-    "assets": {
-      "private": true,
-      "items": {
-        "logo.png": {
-          "type": "file",
-          "path": "resources/logo.png"
+```zon
+.{
+    .name = .myproject,
+    .version = "0.1.0",
+    .fingerprint = 0x90797553773ca567,
+    .minimum_zig_version = "0.14.0",
+    .paths = .{ "build.zig", "build.zig.zon", "src" },
+    .write_files = .{
+        .assets = .{
+            .private = true,
+            .items = .{
+                .@"logo.png" = .{
+                    .type = "file",
+                    .path = "resources/logo.png",
+                },
+                .config = .{
+                    .type = "dir",
+                    .path = "resources/config",
+                    .exclude_extensions = .{.tmp},
+                },
+            },
         },
-        "config": {
-          "type": "dir",
-          "path": "resources/config",
-          "exclude_extensions": [".tmp"]
-        }
-      }
-    }
-  },
-  "executables": {
-    "myapp": {
-      "root_module": {
-        "root_source_file": "src/main.zig"
-      }
-    }
-  }
+    },
+    .executables = .{
+        .myapp = .{
+            .root_module = .{
+                .root_source_file = "src/main.zig",
+            },
+        },
+    },
 }
 ```
 
@@ -77,34 +78,35 @@ Supported sources include:
 ### Configuration Example
 Here’s an extended `zbuild.json` showcasing `LazyPath` resolution:
 
-```json
-{
-  "name": "myproject",
-  "version": "0.1.0",
-  "fingerprint": "0x90797553773ca567",
-  "minimum_zig_version": "0.14.0",
-  "write_files": {
-    "codegen": {
-      "items": {
-        "foo": {
-          "type": "file",
-          "path": "foo_codegen:captureStdOut"
-        }
-      }
-    }
-  },
-  "modules": {
-    "foo": {
-      "root_source_file": "codegen:foo"
-    }
-  },
-  "executables": {
-    "foo_codegen": {
-      "root_module": {
-        "root_source_file": "src/foo_codegen.zig"
-      }
-    }
-  }
+```zon
+.{
+    .name = .myproject,
+    .version = "0.1.0",
+    .fingerprint = 0x90797553773ca567,
+    .minimum_zig_version = "0.14.0",
+    .paths = .{ "build.zig", "build.zig.zon", "src" },
+    .write_files = .{
+        .codegen = .{
+            .items = .{
+                .foo = .{
+                    .type = "file",
+                    .path = "foo_codegen:captureStdOut",
+                },
+            },
+        },
+    },
+    .modules = .{
+        .foo = .{
+            .root_source_file = "codegen:foo",
+        },
+    },
+    .executables = .{
+        .foo_codegen = .{
+            .root_module = .{
+                .root_source_file = "src/foo_codegen.zig",
+            },
+        },
+    },
 }
 ```
 
