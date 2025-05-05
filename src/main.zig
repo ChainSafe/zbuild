@@ -15,6 +15,10 @@ pub const build = @import("cmd_build.zig");
 pub const sync = @import("cmd_sync.zig");
 const fatal = std.process.fatal;
 
+pub const std_options: std.Options = .{
+    .log_level = .info,
+};
+
 const usage =
     \\Usage: zbuild [global_options] [command] [options]
     \\

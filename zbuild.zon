@@ -18,9 +18,7 @@
             .root_module = .{
                 .private = true,
                 .root_source_file = "test/sync.zig",
-                .imports = .{
-                    .zbuild,
-                },
+                .imports = .{.zbuild},
             },
         },
     },
