@@ -296,6 +296,7 @@ pub const Module = struct {
     red_zone: ?bool = null,
     omit_frame_pointer: ?bool = null,
     error_tracing: ?bool = null,
+    include_paths: ?[][]const u8 = null,
 
     pub fn deinit(self: *Module, gpa: std.mem.Allocator) void {
         if (self.name) |n| gpa.free(n);
@@ -875,6 +876,8 @@ const Parser = struct {
                 module.omit_frame_pointer = try self.parseBool(field_value);
             } else if (std.mem.eql(u8, field_name, "error_tracing")) {
                 module.error_tracing = try self.parseBool(field_value);
+            } else if (std.mem.eql(u8, field_name, "include_paths")) {
+                module.include_paths = try self.parseOptionalSlice([]const u8, parseString, field_value);
             }
         }
         return module;

@@ -462,6 +462,17 @@ pub fn writeModule(self: *ConfigBuildgen, name: []const u8, item: Config.Module)
 
     try self.writeLn("}});", .{}, .{});
 
+    if (item.include_paths) |include_paths| {
+        for (include_paths) |path| {
+            try self.writeLn(
+                \\{s}.addIncludePath({s});
+            ,
+                .{ module_id, try self.resolveLazyPath(path, SourcesForModules) },
+                .{},
+            );
+        }
+    }
+
     if (item.private orelse true) {
         try self.writeLn(
             \\b.modules.put(b.dupe("{s}"), {s}) catch @panic("OOM");
