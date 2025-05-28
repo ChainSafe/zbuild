@@ -332,6 +332,9 @@ pub const Executable = struct {
     zig_lib_dir: ?[]const u8 = null,
     win32_manifest: ?[]const u8 = null,
 
+    // install artifact options
+    dest_sub_path: ?[]const u8 = null,
+
     depends_on: ?[][]const u8 = null,
 
     pub fn deinit(self: *Executable, gpa: std.mem.Allocator) void {
@@ -357,6 +360,9 @@ pub const Library = struct {
     use_lld: ?bool = null,
     zig_lib_dir: ?[]const u8 = null,
     win32_manifest: ?[]const u8 = null,
+
+    // install artifact options
+    dest_sub_path: ?[]const u8 = null,
 
     depends_on: ?[][]const u8 = null,
 
@@ -927,6 +933,8 @@ const Parser = struct {
                 executable.zig_lib_dir = try self.parseString(field_value);
             } else if (std.mem.eql(u8, field_name, "win32_manifest")) {
                 executable.win32_manifest = try self.parseString(field_value);
+            } else if (std.mem.eql(u8, field_name, "dest_sub_path")) {
+                executable.dest_sub_path = try self.parseString(field_value);
             } else if (std.mem.eql(u8, field_name, "depends_on")) {
                 executable.depends_on = try self.parseOptionalSlice([]const u8, parseStringOrEnumLiteral, field_value);
             }
@@ -961,6 +969,8 @@ const Parser = struct {
                 library.zig_lib_dir = try self.parseString(field_value);
             } else if (std.mem.eql(u8, field_name, "win32_manifest")) {
                 library.win32_manifest = try self.parseString(field_value);
+            } else if (std.mem.eql(u8, field_name, "dest_sub_path")) {
+                library.dest_sub_path = try self.parseString(field_value);
             } else if (std.mem.eql(u8, field_name, "depends_on")) {
                 library.depends_on = try self.parseOptionalSlice([]const u8, parseStringOrEnumLiteral, field_value);
             }

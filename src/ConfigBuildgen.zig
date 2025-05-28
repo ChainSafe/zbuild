@@ -531,7 +531,16 @@ pub fn writeExecutable(self: *ConfigBuildgen, name: []const u8, item: Config.Exe
     defer self.allocator.free(tls_run_exe_id);
 
     try self.writeLn(
-        \\const {s} = b.addInstallArtifact({s}, .{{}});
+        \\const {s} = b.addInstallArtifact({s}, .{{
+    ,
+        .{ install_exe_id, exe_id },
+        .{},
+    );
+    try self.writeField("dest_sub_path", item.dest_sub_path, .{});
+    try self.writeLn("}});", .{}, .{});
+    try self.writer.writeAll("\n");
+
+    try self.writeLn(
         \\const {s} = b.step("build-exe:{s}", "Install the {s} executable");
         \\{s}.dependOn(&{s}.step);
         \\b.getInstallStep().dependOn(&{s}.step);
@@ -542,8 +551,6 @@ pub fn writeExecutable(self: *ConfigBuildgen, name: []const u8, item: Config.Exe
         \\{s}.dependOn(&{s}.step);
     ,
         .{
-            install_exe_id,
-            exe_id,
             tls_install_exe_id,
             name,
             name,
@@ -605,14 +612,21 @@ pub fn writeLibrary(self: *ConfigBuildgen, name: []const u8, item: Config.Librar
     defer self.allocator.free(tls_install_lib_id);
 
     try self.writeLn(
-        \\const {s} = b.addInstallArtifact({s}, .{{}});
+        \\const {s} = b.addInstallArtifact({s}, .{{
+    ,
+        .{ install_lib_id, lib_id },
+        .{},
+    );
+    try self.writeField("dest_sub_path", item.dest_sub_path, .{});
+    try self.writeLn("}});", .{}, .{});
+    try self.writer.writeAll("\n");
+
+    try self.writeLn(
         \\const {s} = b.step("build-lib:{s}", "Install the {s} library");
         \\{s}.dependOn(&{s}.step);
         \\b.getInstallStep().dependOn(&{s}.step);
     ,
         .{
-            install_lib_id,
-            lib_id,
             tls_install_lib_id,
             name,
             name,
