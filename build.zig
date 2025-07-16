@@ -19,6 +19,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const install_exe_zbuild = b.addInstallArtifact(exe_zbuild, .{});
+
     const tls_install_exe_zbuild = b.step("build-exe:zbuild", "Install the zbuild executable");
     tls_install_exe_zbuild.dependOn(&install_exe_zbuild.step);
     b.getInstallStep().dependOn(&install_exe_zbuild.step);
@@ -33,7 +34,7 @@ pub fn build(b: *std.Build) void {
     const test_zbuild = b.addTest(.{
         .name = "zbuild",
         .root_module = module_zbuild,
-        .filters = &[_][]const u8{  },
+        .filters = &[_][]const u8{},
     });
     const install_test_zbuild = b.addInstallArtifact(test_zbuild, .{});
     const tls_install_test_zbuild = b.step("build-test:zbuild", "Install the zbuild test");
@@ -54,7 +55,7 @@ pub fn build(b: *std.Build) void {
     const test_sync = b.addTest(.{
         .name = "sync",
         .root_module = module_sync,
-        .filters = &[_][]const u8{  },
+        .filters = &[_][]const u8{},
     });
     const install_test_sync = b.addInstallArtifact(test_sync, .{});
     const tls_install_test_sync = b.step("build-test:sync", "Install the sync test");
@@ -66,5 +67,4 @@ pub fn build(b: *std.Build) void {
     tls_run_test.dependOn(&run_test_sync.step);
 
     module_sync.addImport("zbuild", module_zbuild);
-
 }

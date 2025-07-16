@@ -11,6 +11,6 @@ pub fn exec(gpa: Allocator, arena: Allocator, global_opts: GlobalOptions, config
     if (global_opts.no_sync) {
         fatal("--no-sync is incompatible with the sync command", .{});
     }
-    try syncBuildFile(gpa, arena, config, .{ .out_dir = global_opts.project_dir });
+    try syncBuildFile(gpa, arena, config, global_opts, .{ .out_dir = global_opts.project_dir });
     try syncManifest(gpa, arena, global_opts, config, .{ .out_dir = global_opts.project_dir });
 }
