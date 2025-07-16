@@ -23,9 +23,18 @@ pub fn runZigFetch(gpa: Allocator, arena: Allocator, child_opts: ChildOpts, env:
     });
 }
 
+pub fn runZigFmt(gpa: Allocator, arena: Allocator, child_opts: ChildOpts, env: ZigEnv, args: []const []const u8) !void {
+    try runZig(gpa, arena, child_opts, env, .{
+        .fmt = .{
+            .args = args,
+        },
+    });
+}
+
 pub const ZigCmd = union(enum) {
     build: Build,
     fetch: Fetch,
+    fmt: Fmt,
 
     pub const Build = struct {
         step: ?[]const u8,
@@ -41,6 +50,10 @@ pub const ZigCmd = union(enum) {
             yes: ?[]const u8,
             exact: ?[]const u8,
         };
+    };
+
+    pub const Fmt = struct {
+        args: []const []const u8,
     };
 };
 
@@ -86,6 +99,10 @@ pub fn runZig(gpa: Allocator, arena: Allocator, child_opts: ChildOpts, env: ZigE
                     }
                 },
             }
+        },
+        .fmt => |fmt| {
+            try argv.append("fmt");
+            try argv.appendSlice(fmt.args);
         },
     }
 

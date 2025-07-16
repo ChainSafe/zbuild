@@ -18,7 +18,9 @@ pub fn build(b: *std.Build) void {
         .root_module = module_zbuild,
     });
 
-    const install_exe_zbuild = b.addInstallArtifact(exe_zbuild, .{});
+    const install_exe_zbuild = b.addInstallArtifact(exe_zbuild, .{
+    });
+
     const tls_install_exe_zbuild = b.step("build-exe:zbuild", "Install the zbuild executable");
     tls_install_exe_zbuild.dependOn(&install_exe_zbuild.step);
     b.getInstallStep().dependOn(&install_exe_zbuild.step);
