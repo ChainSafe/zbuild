@@ -31,10 +31,8 @@ pub fn syncBuildFile(gpa: Allocator, arena: Allocator, config: Config, global_op
     try runZigFmt(
         gpa,
         arena,
-        .{ .cwd = global_opts.project_dir },
+        .{ .cwd = global_opts.project_dir, .stderr_behavior = .Ignore, .stdout_behavior = .Ignore },
         global_opts.getZigEnv(),
-        &[_][]const u8{
-            opts.build_file orelse "build.zig",
-        },
+        &[_][]const u8{opts.build_file orelse "build.zig"},
     );
 }
