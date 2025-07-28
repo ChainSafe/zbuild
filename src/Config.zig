@@ -1031,6 +1031,8 @@ const Parser = struct {
                 t.use_lld = try self.parseBool(field_value);
             } else if (std.mem.eql(u8, field_name, "zig_lib_dir")) {
                 t.zig_lib_dir = try self.parseString(field_value);
+            } else if (std.mem.eql(u8, field_name, "filters")) {
+                t.filters = try self.parseOptionalSlice([]const u8, parseString, field_value) orelse &.{};
             }
         }
         if (!has_root_module) {
