@@ -184,7 +184,9 @@ pub fn write(self: *ConfigBuildgen) !void {
         blk: for (self.modules.values()) |module| {
             if (module.imports) |imports| {
                 for (imports) |import| {
-                    if (std.mem.eql(u8, name, import)) {
+                    var parts = std.mem.splitScalar(u8, import, ':');
+                    const first = parts.first();
+                    if (std.mem.eql(u8, name, first)) {
                         dependency_unused = false;
                         break :blk;
                     }
@@ -1085,7 +1087,7 @@ fn resolveImport(self: *ConfigBuildgen, import: []const u8) ![]const u8 {
         var parts = std.mem.splitScalar(u8, import, ':');
         const first = parts.first();
         if (self.dependencies.contains(first)) {
-            const dep_id = try allocFmtId(self.allocator, "dep", import);
+            const dep_id = try allocFmtId(self.allocator, "dep", first);
             defer self.allocator.free(dep_id);
             return try std.fmt.bufPrint(&scratch, "{s}.module(\"{s}\")", .{ dep_id, parts.rest() });
         }
