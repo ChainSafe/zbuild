@@ -716,7 +716,18 @@ pub fn writeTest(self: *ConfigBuildgen, name: []const u8, item: Config.Test) !vo
         if (item.zig_lib_dir) |f| try self.resolveLazyPath(f, SourcesForModules) else null,
         .{ .quote_str = false },
     );
-    try self.writeField("filters", try strSliceLiteral(item.filters), .{ .quote_str = false });
+    const filters = try std.fmt.allocPrint(
+        self.allocator,
+        \\b.option([][]const u8, "{s}.filters", "{s} test filters") orelse {s}
+    ,
+        .{
+            name,
+            name,
+            (try strSliceLiteral(item.filters)) orelse "&.{}",
+        },
+    );
+    defer self.allocator.free(filters);
+    try self.writeField("filters", filters, .{ .quote_str = false });
 
     try self.writeLn("}});", .{}, .{});
 
