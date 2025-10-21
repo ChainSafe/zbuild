@@ -25,32 +25,33 @@ tests: ?ArrayHashMap(Test) = null,
 fmts: ?ArrayHashMap(Fmt) = null,
 runs: ?ArrayHashMap(Run) = null,
 
-pub const Dependency = union(enum) {
-    path: Path,
-    url: Url,
+pub const Dependency = struct {
+    typ: enum { path, url },
+    value: []const u8,
+    hash: ?[]const u8 = null,
+    lazy: ?bool = null,
+    args: ?ArrayHashMap(Arg) = null,
 
-    pub const Path = struct {
-        path: []const u8,
-        hash: ?[]const u8 = null,
-        lazy: ?bool = null,
-    };
-
-    pub const Url = struct {
-        url: []const u8,
-        hash: ?[]const u8 = null,
-        lazy: ?bool = null,
+    const Arg = union(enum) {
+        bool: bool,
+        int: i64,
+        float: f64,
+        @"enum": []const u8,
+        string: []const u8,
+        null: void,
     };
 
     pub fn deinit(self: *Dependency, gpa: std.mem.Allocator) void {
-        switch (self.*) {
-            .path => |*p| {
-                gpa.free(p.path);
-                if (p.hash) |h| gpa.free(h);
-            },
-            .url => |*u| {
-                gpa.free(u.url);
-                if (u.hash) |h| gpa.free(h);
-            },
+        gpa.free(self.value);
+        if (self.hash) |h| gpa.free(h);
+        if (self.args) |a| {
+            for (a.values()) |arg| switch (arg) {
+                .@"enum" => |e| gpa.free(e),
+                .string => |s| gpa.free(s),
+                else => {},
+            };
+            for (a.keys()) |k| gpa.free(k);
+            a.deinit();
         }
     }
 };
@@ -587,7 +588,7 @@ const Parser = struct {
 
     const Self = @This();
 
-    pub const Error = error{ OutOfMemory, ParseZon };
+    pub const Error = error{ OutOfMemory, ParseZon, NegativeIntoUnsigned, TargetTooSmall };
 
     pub fn init(gpa: std.mem.Allocator, zoir: std.zig.Zoir, ast: std.zig.Ast, status: *std.zon.parse.Status) Parser {
         return Parser{
@@ -682,15 +683,75 @@ const Parser = struct {
 
     fn parseDependency(self: *Self, index: std.zig.Zoir.Node.Index) Error!Dependency {
         const n = try self.parseStructLiteral(index);
-        for (n.names) |name| {
+        var dep = Dependency{
+            .typ = undefined,
+            .value = undefined,
+        };
+        var has_type_field = false;
+        for (n.names, 0..) |name, i| {
             const field_name = name.get(self.zoir);
+            const field_value = n.vals.at(@intCast(i));
             if (std.mem.eql(u8, field_name, "path")) {
-                return .{ .path = try self.parseT(Dependency.Path, index) };
+                dep.typ = .path;
+                dep.value = try self.parseString(field_value);
+                has_type_field = true;
             } else if (std.mem.eql(u8, field_name, "url")) {
-                return .{ .url = try self.parseT(Dependency.Url, index) };
+                dep.typ = .url;
+                dep.value = try self.parseString(field_value);
+                has_type_field = true;
+            } else if (std.mem.eql(u8, field_name, "args")) {
+                dep.args = try self.parseOptionalHashMap(Dependency.Arg, parseDependencyArg, field_value);
             }
         }
-        try self.returnParseError("missing required field 'path' or 'url'", index.getAstNode(self.zoir));
+        if (!has_type_field) {
+            try self.returnParseError("missing required field 'path' or 'url'", index.getAstNode(self.zoir));
+        }
+        return dep;
+    }
+
+    fn parseDependencyArg(self: *Self, index: std.zig.Zoir.Node.Index) Error!Dependency.Arg {
+        const node = index.get(self.zoir);
+        switch (node) {
+            .true => {
+                return .{
+                    .bool = true,
+                };
+            },
+            .false => {
+                return .{
+                    .bool = false,
+                };
+            },
+            .int_literal => |i| {
+                return .{
+                    .int = switch (i) {
+                        .small => |s| s,
+                        .big => |b| try b.toInt(i64),
+                    },
+                };
+            },
+            .float_literal => |f| {
+                return .{
+                    .float = @floatCast(f),
+                };
+            },
+            .enum_literal => |e| {
+                return .{
+                    .@"enum" = try self.gpa.dupe(u8, e.get(self.zoir)),
+                };
+            },
+            .string_literal => |s| {
+                return .{
+                    .string = try self.gpa.dupe(u8, s),
+                };
+            },
+            .null => {
+                return .{ .null = {} };
+            },
+            else => {
+                try self.returnParseError("expected a boo, int, float, string literal, or enum literal", index.getAstNode(self.zoir));
+            },
+        }
     }
 
     fn parseWriteFile(self: *Self, index: std.zig.Zoir.Node.Index) Error!WriteFile {
@@ -1377,14 +1438,39 @@ fn Serializer(Writer: type) type {
             name: []const u8,
             item: Dependency,
         ) !void {
-            switch (item) {
-                .path => |p| {
-                    try outer.field(name, p, .{ .emit_default_optional_fields = false });
-                },
-                .url => |u| {
-                    try outer.field(name, u, .{ .emit_default_optional_fields = false });
-                },
+            var inner = try outer.beginStructField(name, .{});
+            switch (item.typ) {
+                .path => try inner.field("path", item.value, .{}),
+                .url => try inner.field("url", item.value, .{}),
             }
+            if (item.args) |args| {
+                var args_inner = try inner.beginStructField("args", .{});
+                for (args.keys(), args.values()) |arg_name, arg_value| {
+                    switch (arg_value) {
+                        .bool => |b| {
+                            try args_inner.field(arg_name, b, .{});
+                        },
+                        .int => |i| {
+                            try args_inner.field(arg_name, i, .{});
+                        },
+                        .float => |f| {
+                            try args_inner.field(arg_name, f, .{});
+                        },
+                        .string => |s| {
+                            try args_inner.field(arg_name, s, .{});
+                        },
+                        .@"enum" => |e| {
+                            try args_inner.fieldPrefix(arg_name);
+                            try args_inner.container.serializer.writer.print(".{}", .{std.zig.fmtId(e)});
+                        },
+                        .null => {
+                            try args_inner.field(arg_name, null, .{});
+                        },
+                    }
+                }
+                try args_inner.end();
+            }
+            try inner.end();
         }
 
         fn serializeWriteFile(

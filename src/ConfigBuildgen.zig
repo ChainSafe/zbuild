@@ -66,17 +66,17 @@ pub fn write(self: *ConfigBuildgen) !void {
 
     // add all config items without linking depends_on, lazy paths, or imports
 
-    if (self.config.dependencies) |dependencies| {
-        try self.writeItems(Config.Dependency, writeDependency, dependencies);
-    }
-    if (self.config.write_files) |write_files| {
-        try self.writeItems(Config.WriteFile, writeWriteFile, write_files);
-    }
     if (self.config.options) |options| {
         try self.writeItems(Config.Option, writeOption, options);
     }
     if (self.config.options_modules) |options_modules| {
         try self.writeItems(Config.OptionsModule, writeOptionsModule, options_modules);
+    }
+    if (self.config.dependencies) |dependencies| {
+        try self.writeItems(Config.Dependency, writeDependency, dependencies);
+    }
+    if (self.config.write_files) |write_files| {
+        try self.writeItems(Config.WriteFile, writeWriteFile, write_files);
     }
     if (self.config.modules) |modules| {
         try self.writeItems(Config.Module, writeModule, modules);
@@ -440,10 +440,10 @@ pub fn writeModule(self: *ConfigBuildgen, name: []const u8, item: Config.Module)
     try self.writeField(
         "root_source_file",
         if (item.root_source_file) |f| try self.resolveLazyPath(f, SourcesForModules) else null,
-        .{ .quote_str = false },
+        .{ .str = .no_quote },
     );
-    try self.writeField("target", try resolvedTarget(item.target), .{ .quote_str = false });
-    try self.writeField("optimize", try optimize(item.optimize), .{ .quote_str = false });
+    try self.writeField("target", try resolvedTarget(item.target), .{ .str = .no_quote });
+    try self.writeField("optimize", try optimize(item.optimize), .{ .str = .no_quote });
     try self.writeField("link_libc", item.link_libc, .{});
     try self.writeField("link_libcpp", item.link_libcpp, .{});
     try self.writeField("single_threaded", item.single_threaded, .{});
@@ -500,8 +500,8 @@ pub fn writeExecutable(self: *ConfigBuildgen, name: []const u8, item: Config.Exe
     );
 
     try self.writeField("name", name, .{});
-    try self.writeField("version", try semanticVersion(item.version), .{ .quote_str = false });
-    try self.writeField("root_module", module_id, .{ .quote_str = false });
+    try self.writeField("version", try semanticVersion(item.version), .{ .str = .no_quote });
+    try self.writeField("root_module", module_id, .{ .str = .no_quote });
     try self.writeField("linkage", item.linkage, .{});
     try self.writeField("max_rss", item.max_rss, .{});
     try self.writeField("use_llvm", item.use_llvm, .{});
@@ -509,12 +509,12 @@ pub fn writeExecutable(self: *ConfigBuildgen, name: []const u8, item: Config.Exe
     try self.writeField(
         "zig_lib_dir",
         if (item.zig_lib_dir) |f| try self.resolveLazyPath(f, SourcesForModules) else null,
-        .{ .quote_str = false },
+        .{ .str = .no_quote },
     );
     try self.writeField(
         "win32_manifest",
         if (item.win32_manifest) |f| try self.resolveLazyPath(f, SourcesForModules) else null,
-        .{ .quote_str = false },
+        .{ .str = .no_quote },
     );
 
     try self.writeLn("}});", .{}, .{});
@@ -587,8 +587,8 @@ pub fn writeLibrary(self: *ConfigBuildgen, name: []const u8, item: Config.Librar
     );
 
     try self.writeField("name", name, .{});
-    try self.writeField("version", try semanticVersion(item.version), .{ .quote_str = false });
-    try self.writeField("root_module", module_id, .{ .quote_str = false });
+    try self.writeField("version", try semanticVersion(item.version), .{ .str = .no_quote });
+    try self.writeField("root_module", module_id, .{ .str = .no_quote });
     try self.writeField("linkage", item.linkage, .{});
     try self.writeField("max_rss", item.max_rss, .{});
     try self.writeField("use_llvm", item.use_llvm, .{});
@@ -596,12 +596,12 @@ pub fn writeLibrary(self: *ConfigBuildgen, name: []const u8, item: Config.Librar
     try self.writeField(
         "zig_lib_dir",
         if (item.zig_lib_dir) |f| try self.resolveLazyPath(f, SourcesForModules) else null,
-        .{ .quote_str = false },
+        .{ .str = .no_quote },
     );
     try self.writeField(
         "win32_manifest",
         if (item.win32_manifest) |f| try self.resolveLazyPath(f, SourcesForModules) else null,
-        .{ .quote_str = false },
+        .{ .str = .no_quote },
     );
 
     try self.writeLn("}});", .{}, .{});
@@ -654,14 +654,14 @@ pub fn writeObject(self: *ConfigBuildgen, name: []const u8, item: Config.Object)
     );
 
     try self.writeField("name", name, .{});
-    try self.writeField("root_module", module_id, .{ .quote_str = false });
+    try self.writeField("root_module", module_id, .{ .str = .no_quote });
     try self.writeField("max_rss", item.max_rss, .{});
     try self.writeField("use_llvm", item.use_llvm, .{});
     try self.writeField("use_lld", item.use_lld, .{});
     try self.writeField(
         "zig_lib_dir",
         if (item.zig_lib_dir) |f| try self.resolveLazyPath(f, SourcesForModules) else null,
-        .{ .quote_str = false },
+        .{ .str = .no_quote },
     );
 
     try self.writeLn("}});", .{}, .{});
@@ -707,14 +707,14 @@ pub fn writeTest(self: *ConfigBuildgen, name: []const u8, item: Config.Test) !vo
     );
 
     try self.writeField("name", name, .{});
-    try self.writeField("root_module", module_id, .{ .quote_str = false });
+    try self.writeField("root_module", module_id, .{ .str = .no_quote });
     try self.writeField("max_rss", item.max_rss, .{});
     try self.writeField("use_llvm", item.use_llvm, .{});
     try self.writeField("use_lld", item.use_lld, .{});
     try self.writeField(
         "zig_lib_dir",
         if (item.zig_lib_dir) |f| try self.resolveLazyPath(f, SourcesForModules) else null,
-        .{ .quote_str = false },
+        .{ .str = .no_quote },
     );
     const filters = try std.fmt.allocPrint(
         self.allocator,
@@ -727,7 +727,7 @@ pub fn writeTest(self: *ConfigBuildgen, name: []const u8, item: Config.Test) !vo
         },
     );
     defer self.allocator.free(filters);
-    try self.writeField("filters", filters, .{ .quote_str = false });
+    try self.writeField("filters", filters, .{ .str = .no_quote });
 
     try self.writeLn("}});", .{}, .{});
 
@@ -785,8 +785,8 @@ pub fn writeFmt(self: *ConfigBuildgen, name: []const u8, item: Config.Fmt) !void
         .{},
     );
 
-    try self.writeField("paths", try strSliceLiteral(item.paths) orelse "&.{}", .{ .quote_str = false });
-    try self.writeField("exclude_paths", try strSliceLiteral(item.exclude_paths) orelse "&.{}", .{ .quote_str = false });
+    try self.writeField("paths", try strSliceLiteral(item.paths) orelse "&.{}", .{ .str = .no_quote });
+    try self.writeField("exclude_paths", try strSliceLiteral(item.exclude_paths) orelse "&.{}", .{ .str = .no_quote });
     try self.writeField("check", item.check, .{});
 
     try self.writeLn("}});", .{}, .{});
@@ -837,13 +837,45 @@ pub fn writeRun(self: *ConfigBuildgen, name: []const u8, item: Config.Run) !void
 }
 
 pub fn writeDependency(self: *ConfigBuildgen, name: []const u8, item: Config.Dependency) !void {
-    _ = item;
-    try self.writeLn(
-        \\const {s} = b.dependency("{s}", .{{}});
-    ,
-        .{ try fmtId("dep", name), name },
-        .{},
-    );
+    if (item.args) |args| {
+        try self.writeLn(
+            \\const {s} = b.dependency("{s}", .{{
+        ,
+            .{ try fmtId("dep", name), name },
+            .{},
+        );
+        for (args.keys(), args.values()) |key, value| {
+            switch (value) {
+                .bool => |b| try self.writeField(key, b, .{}),
+                .int => |i| try self.writeField(key, i, .{}),
+                .float => |f| try self.writeField(key, f, .{}),
+                .@"enum" => |e| if (std.mem.eql(u8, e, "optimize") or std.mem.eql(u8, e, "target")) {
+                    try self.writeField(key, e, .{ .str = .no_quote });
+                } else if (self.options.contains(e)) {
+                    const option_id = try allocFmtId(self.allocator, "option", e);
+                    defer self.allocator.free(option_id);
+                    try self.writeField(key, option_id, .{ .str = .no_quote });
+                } else {
+                    try self.writeField(key, e, .{ .str = .enum_literal });
+                },
+                .string => |s| try self.writeField(key, s, .{}),
+                .null => {
+                    // skip
+                },
+            }
+        }
+        try self.writeLn("}});", .{}, .{});
+    } else {
+        try self.writeLn(
+            \\const {s} = b.dependency("{s}", .{{
+            \\    .optimize = optimize,
+            \\    .target = target,
+            \\}});
+        ,
+            .{ try fmtId("dep", name), name },
+            .{},
+        );
+    }
     try self.dependencies.put(name, undefined);
 }
 
@@ -883,7 +915,7 @@ fn writeLn(self: *ConfigBuildgen, comptime fmt: []const u8, args: anytype, compt
 
 const WriteFieldOpts = struct {
     indent: u8 = 8,
-    quote_str: bool = true,
+    str: enum { quote, no_quote, enum_literal } = .quote,
 };
 
 fn writeFields(self: *ConfigBuildgen, kvs: anytype, comptime opts: WriteFieldOpts) !void {
@@ -910,10 +942,10 @@ fn writeField(self: *ConfigBuildgen, key: []const u8, value: anytype, comptime o
             if (p.size == .slice) {
                 const childInfo = @typeInfo(p.child);
                 if (childInfo == .int and childInfo.int.bits == 8) {
-                    if (opts.quote_str) {
-                        break :blk try std.fmt.allocPrint(self.allocator, "\"{s}\"", .{value_});
-                    } else {
-                        break :blk value_;
+                    switch (opts.str) {
+                        .quote => break :blk try std.fmt.allocPrint(self.allocator, "\"{s}\"", .{value_}),
+                        .no_quote => break :blk value_,
+                        .enum_literal => break :blk try std.fmt.allocPrint(self.allocator, ".{}", .{std.zig.fmtId(value_)}),
                     }
                 }
             }

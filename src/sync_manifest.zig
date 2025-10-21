@@ -45,11 +45,6 @@ pub fn syncManifest(gpa: Allocator, arena: Allocator, global_opts: GlobalOptions
     });
     if (config.dependencies) |dependencies| {
         for (dependencies.keys(), dependencies.values()) |name, config_dep| {
-            const path_or_url = switch (config_dep) {
-                .path => |p| p.path,
-                .url => |u| u.url,
-            };
-
             if (manifest) |m| {
                 if (m.dependencies.get(name)) |manifest_dep| {
                     if (depEql(manifest_dep, config_dep)) {
@@ -62,7 +57,7 @@ pub fn syncManifest(gpa: Allocator, arena: Allocator, global_opts: GlobalOptions
                 arena,
                 .{ .cwd = global_opts.project_dir },
                 global_opts.getZigEnv(),
-                path_or_url,
+                config_dep.value,
                 .{ .exact = name },
             );
         }
@@ -110,16 +105,20 @@ fn allocPrintManifest(allocator: Allocator, config: Config, manifest: ?Manifest)
 }
 
 fn depEql(manifest_dep: Manifest.Dependency, config_dep: Config.Dependency) bool {
-    if (config_dep == .path and manifest_dep.location != .path) {
+    if (config_dep.typ == .path and manifest_dep.location != .path) {
         return false;
     }
-    if (config_dep == .url and manifest_dep.location != .url) {
+    if (config_dep.typ == .url and manifest_dep.location != .url) {
         return false;
     }
-    const manifest_path_or_url, const manifest_hash, const config_path_or_url, const config_hash = switch (config_dep) {
-        .path => .{ manifest_dep.location.path, manifest_dep.hash, config_dep.path.path, config_dep.path.hash },
-        .url => .{ manifest_dep.location.url, manifest_dep.hash, config_dep.url.url, config_dep.url.hash },
+    const manifest_path_or_url = switch (manifest_dep.location) {
+        .path => |path| path,
+        .url => |url| url,
     };
+    const config_path_or_url = config_dep.value;
+    const manifest_hash = manifest_dep.hash;
+    const config_hash = config_dep.hash;
+
     if (!std.mem.eql(u8, manifest_path_or_url, config_path_or_url)) {
         return false;
     }
