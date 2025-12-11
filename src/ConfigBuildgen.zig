@@ -607,6 +607,14 @@ pub fn writeLibrary(self: *ConfigBuildgen, name: []const u8, item: Config.Librar
     try self.writeLn("}});", .{}, .{});
     try self.writer.writeAll("\n");
 
+    if (item.linker_allow_shlib_undefined) |linker_allow_shlib_undefined| {
+        try self.writeLn(
+            "{s}.linker_allow_shlib_undefined = {};",
+            .{ lib_id, linker_allow_shlib_undefined },
+            .{},
+        );
+    }
+
     const install_lib_id = try allocFmtId(self.allocator, "install_lib", name);
     defer self.allocator.free(install_lib_id);
 
