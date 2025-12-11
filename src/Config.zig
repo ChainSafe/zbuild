@@ -361,6 +361,7 @@ pub const Library = struct {
     use_lld: ?bool = null,
     zig_lib_dir: ?[]const u8 = null,
     win32_manifest: ?[]const u8 = null,
+    linker_allow_shlib_undefined: ?bool = null,
 
     // install artifact options
     dest_sub_path: ?[]const u8 = null,
@@ -1034,6 +1035,8 @@ const Parser = struct {
                 library.dest_sub_path = try self.parseString(field_value);
             } else if (std.mem.eql(u8, field_name, "depends_on")) {
                 library.depends_on = try self.parseOptionalSlice([]const u8, parseStringOrEnumLiteral, field_value);
+            } else if (std.mem.eql(u8, field_name, "linker_allow_shlib_undefined")) {
+                library.linker_allow_shlib_undefined = try self.parseBool(field_value);
             }
         }
         if (!has_root_module) {
