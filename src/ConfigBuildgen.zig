@@ -323,8 +323,8 @@ pub fn writeOption(self: *ConfigBuildgen, name: []const u8, item: Config.Option)
         },
         .list => |l| {
             break :blk .{
-                "[][]const u8",
-                try strSliceLiteral(l.default),
+                "[]const []const u8",
+                try allocStrSliceLiteral(self.allocator, l.default),
                 l.description,
             };
         },
@@ -1083,6 +1083,10 @@ pub fn strSliceLiteral(str_slice_maybe: ?[]const []const u8) !?[]u8 {
     } else {
         return null;
     }
+}
+
+pub fn allocStrSliceLiteral(allocator: std.mem.Allocator, str_slice_maybe: ?[]const []const u8) !?[]u8 {
+    return try allocator.dupe(u8, try strSliceLiteral(str_slice_maybe) orelse return null);
 }
 
 pub fn strTupleLiteral(str_slice_maybe: ?[]const []const u8) !?[]u8 {
