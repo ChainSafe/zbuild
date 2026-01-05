@@ -1300,7 +1300,11 @@ const Parser = struct {
             errdefer self.gpa.free(module_name);
             const field_value = n.vals.at(@intCast(i));
             var module_overrides = try self.parseProfileModuleOverrides(field_value);
-            errdefer module_overrides.deinit();
+            errdefer {
+                for (module_overrides.values()) |*override| override.deinit(self.gpa);
+                for (module_overrides.keys()) |k| self.gpa.free(k);
+                module_overrides.deinit();
+            }
             try modules.put(module_name, module_overrides);
         }
 
