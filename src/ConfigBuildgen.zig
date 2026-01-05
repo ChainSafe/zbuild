@@ -72,31 +72,22 @@ pub fn write(self: *ConfigBuildgen) !void {
     const profile_names = if (maybe_profiles) |p| p.getProfileNames() else &.{};
     if (profile_names.len > 0) {
         const profiles = maybe_profiles.?;
-        const active_profile = profiles.active_profile.?;
+        const default_profile = profiles.default_profile.?;
         const enum_body = try self.profileEnumBody(profile_names);
         defer self.allocator.free(enum_body);
 
-        const dispatch_body = try self.profileDispatchBody(profile_names);
-        defer self.allocator.free(dispatch_body);
-
-        const fallback_tag = try allocFmtId(self.allocator, "profile", active_profile);
-        defer self.allocator.free(fallback_tag);
+        const default_tag = try allocFmtId(self.allocator, "", default_profile);
+        defer self.allocator.free(default_tag);
 
         const profile_block = try std.fmt.allocPrint(
             self.allocator,
-            \\    const profile = b.option([]const u8, "profile", "Active build profile") orelse "{s}";
-            \\    const ProfileTag = enum {{
+            \\    const Profile = enum {{
             \\{s}
             \\    }};
-            \\    const profile_tag = blk: {{
-            \\{s}
-            \\        }} else {{
-            \\            break :blk ProfileTag.{s};
-            \\        }}
-            \\    }};
+            \\    const profile = b.option(Profile, "profile", "Active build profile") orelse .{s};
             \\
         ,
-            .{ active_profile, enum_body, dispatch_body, fallback_tag },
+            .{ enum_body, default_tag },
         );
         defer self.allocator.free(profile_block);
 
@@ -245,30 +236,9 @@ fn profileEnumBody(self: *ConfigBuildgen, profile_names: []const []const u8) ![]
     var writer = buffer.writer();
 
     for (profile_names) |name| {
-        const tag = try allocFmtId(self.allocator, "profile", name);
+        const tag = try allocFmtId(self.allocator, "", name);
         defer self.allocator.free(tag);
         try writer.print("        {s},\n", .{tag});
-    }
-
-    return buffer.toOwnedSlice();
-}
-
-fn profileDispatchBody(self: *ConfigBuildgen, profile_names: []const []const u8) ![]u8 {
-    var buffer = std.ArrayList(u8).init(self.allocator);
-    errdefer buffer.deinit();
-    var writer = buffer.writer();
-
-    for (profile_names, 0..) |name, index| {
-        const tag = try allocFmtId(self.allocator, "profile", name);
-        defer self.allocator.free(tag);
-
-        if (index == 0) {
-            try writer.print("        if (std.mem.eql(u8, profile, \"{s}\")) {{\n", .{name});
-        } else {
-            try writer.print("        }} else if (std.mem.eql(u8, profile, \"{s}\")) {{\n", .{name});
-        }
-
-        try writer.print("            break :blk ProfileTag.{s};\n", .{tag});
     }
 
     return buffer.toOwnedSlice();
@@ -461,7 +431,7 @@ pub fn writeOption(self: *ConfigBuildgen, module_name: []const u8, name: []const
             }
             const expr = try self.formatProfileOverride(override_ptr.*, t);
             errdefer self.allocator.free(expr);
-            const tag = try allocFmtId(self.allocator, "profile", profile_name);
+            const tag = try allocFmtId(self.allocator, "", profile_name);
             errdefer self.allocator.free(tag);
             try override_list.append(.{ .tag = tag, .expr = expr });
         }
@@ -477,10 +447,10 @@ pub fn writeOption(self: *ConfigBuildgen, module_name: []const u8, name: []const
     if (override_count > 0) {
         if (!all_profiles_covered and init_default == null) return error.MissingProfileFallback;
 
-        switch_id = try allocFmtId(self.allocator, "profile_default", name);
+        switch_id = try allocFmtId(self.allocator, "default", name);
 
         try self.writeLn(
-            "const {s} = switch (profile_tag) {{",
+            "const {s} = switch (profile) {{",
             .{switch_id.?},
             .{},
         );
@@ -1407,7 +1377,11 @@ fn resolveLazyPath(self: *ConfigBuildgen, path: []const u8, comptime sources: an
 /// wrapper around std.zig.fmtId that includes a prefix string
 fn fmtId(prefix: []const u8, name: []const u8) ![]const u8 {
     var fmt_scratch: [4096]u8 = undefined;
-    return try std.fmt.bufPrint(&scratch, "{}", .{std.zig.fmtId(try std.fmt.bufPrint(&fmt_scratch, "{s}_{s}", .{ prefix, name }))});
+    const combined = if (prefix.len == 0)
+        try std.fmt.bufPrint(&fmt_scratch, "{s}", .{name})
+    else
+        try std.fmt.bufPrint(&fmt_scratch, "{s}_{s}", .{ prefix, name });
+    return try std.fmt.bufPrint(&scratch, "{}", .{std.zig.fmtId(combined)});
 }
 
 /// wrapper around std.zig.fmtId that includes a prefix string, consumer is responsible for freeing

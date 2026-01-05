@@ -24,19 +24,22 @@
                 .type = "enum",
                 .enum_options = .{ .disabled, .paranoid },
                 .default = .disabled,
+                .description = "Memory leak detection level",
             },
             .threshold = .{
                 .type = "usize",
                 .default = 0,
+                .description = "Threshold value for detection",
             },
             .debug_mode = .{
                 .type = "bool",
                 .default = true,
+                .description = "Enable debug mode",
             },
         },
     },
     .profiles = .{
-        .active = .dev,
+        .default = .dev,
         .dev = .{
             .options_modules = .{
                 .build_options = .{

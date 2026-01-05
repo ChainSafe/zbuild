@@ -224,7 +224,7 @@ pub const Option = union(enum) {
 
 pub const Profiles = struct {
     profiles: ?ArrayHashMap(Profile) = null,
-    active_profile: ?[]const u8 = null,
+    default_profile: ?[]const u8 = null,
 
     pub fn deinit(self: *Profiles, gpa: std.mem.Allocator) void {
         if (self.profiles) |*map| {
@@ -232,7 +232,7 @@ pub const Profiles = struct {
             for (map.keys()) |k| gpa.free(k);
             map.deinit();
         }
-        if (self.active_profile) |a| gpa.free(a);
+        if (self.default_profile) |a| gpa.free(a);
     }
 
     pub fn getProfileNames(self: Profiles) []const []const u8 {
@@ -1216,17 +1216,17 @@ const Parser = struct {
         const n = try self.parseStructLiteral(index);
 
         const map = &profiles.profiles.?;
-        var active_field_node: ?std.zig.Zoir.Node.Index = null;
-        var has_active_profile = false;
+        var default_field_node: ?std.zig.Zoir.Node.Index = null;
+        var has_default_profile = false;
 
         for (n.names, 0..) |name, i| {
             const field_name = name.get(self.zoir);
             const field_value = n.vals.at(@intCast(i));
 
-            if (std.mem.eql(u8, field_name, "active")) {
-                profiles.active_profile = try self.parseEnumLiteral(field_value);
-                has_active_profile = true;
-                active_field_node = field_value;
+            if (std.mem.eql(u8, field_name, "default")) {
+                profiles.default_profile = try self.parseEnumLiteral(field_value);
+                has_default_profile = true;
+                default_field_node = field_value;
             } else {
                 const profile_name = try self.gpa.dupe(u8, field_name);
                 var profile = try self.parseProfile(field_value);
@@ -1247,17 +1247,17 @@ const Parser = struct {
             try self.returnParseError("profiles must define at least one profile", err_node);
         }
 
-        if (!has_active_profile) {
+        if (!has_default_profile) {
             const err_node = index.getAstNode(self.zoir);
-            try self.returnParseError("profiles must specify 'active'", err_node);
+            try self.returnParseError("profiles must specify 'default'", err_node);
         }
 
-        const active_profile = profiles.active_profile.?;
-        if (!map.contains(active_profile)) {
-            const err_node = (active_field_node orelse index).getAstNode(self.zoir);
+        const default_profile = profiles.default_profile.?;
+        if (!map.contains(default_profile)) {
+            const err_node = (default_field_node orelse index).getAstNode(self.zoir);
             try self.returnParseErrorFmt(
-                "active profile '{s}' does not exist",
-                .{active_profile},
+                "default profile '{s}' does not exist",
+                .{default_profile},
                 err_node,
             );
         }
