@@ -24,6 +24,7 @@ objects: ?ArrayHashMap(Object) = null,
 tests: ?ArrayHashMap(Test) = null,
 fmts: ?ArrayHashMap(Fmt) = null,
 runs: ?ArrayHashMap(Run) = null,
+profiles: Profiles = .{},
 
 pub const Dependency = struct {
     typ: enum { path, url },
@@ -219,6 +220,97 @@ pub const Option = union(enum) {
             std.mem.eql(u8, t, "f128") or
             std.mem.eql(u8, t, "c_longdouble");
     }
+};
+
+pub const Profiles = struct {
+    profiles: ?ArrayHashMap(Profile) = null,
+    default_profile: ?[]const u8 = null,
+
+    pub fn deinit(self: *Profiles, gpa: std.mem.Allocator) void {
+        if (self.profiles) |*map| {
+            for (map.values()) |*profile| profile.deinit(gpa);
+            for (map.keys()) |k| gpa.free(k);
+            map.deinit();
+        }
+        if (self.default_profile) |d| gpa.free(d);
+    }
+
+    pub fn getProfileNames(self: Profiles) []const []const u8 {
+        const map = self.profiles orelse return &.{};
+        return map.keys();
+    }
+
+    pub fn getOverride(
+        self: Profiles,
+        profile_name: []const u8,
+        module_name: []const u8,
+        option_name: []const u8,
+    ) ?*const OptionOverride {
+        const map = self.profiles orelse return null;
+        const profile = map.getPtr(profile_name) orelse return null;
+        var modules = profile.options_modules orelse return null;
+        const module = modules.getPtr(module_name) orelse return null;
+        return module.getPtr(option_name);
+    }
+
+    pub fn hasProfile(self: Profiles, profile_name: []const u8) bool {
+        const map = self.profiles orelse return false;
+        return map.contains(profile_name);
+    }
+
+    pub const Profile = struct {
+        options_modules: ?ArrayHashMap(Profiles.OptionsModule) = null,
+
+        pub fn deinit(self: *Profile, gpa: std.mem.Allocator) void {
+            if (self.options_modules) |*modules| {
+                for (modules.values()) |*module| {
+                    for (module.values()) |*override| override.deinit(gpa);
+                    for (module.keys()) |k| gpa.free(k);
+                    module.deinit();
+                }
+                for (modules.keys()) |k| gpa.free(k);
+                modules.deinit();
+            }
+        }
+    };
+
+    pub const OptionsModule = ArrayHashMap(OptionOverride);
+
+    pub const OptionOverride = union(enum) {
+        bool: bool,
+        int: i64,
+        float: f64,
+        enum_literal: []const u8,
+        enum_list: [][]const u8,
+        string: []const u8,
+        string_list: [][]const u8,
+
+        pub fn deinit(self: *OptionOverride, allocator: std.mem.Allocator) void {
+            switch (self.*) {
+                .enum_literal, .string => |s| allocator.free(s),
+                .enum_list, .string_list => |slice| {
+                    for (slice) |item| allocator.free(item);
+                    allocator.free(slice);
+                },
+                else => {},
+            }
+        }
+
+        pub fn isCompatible(self: OptionOverride, option: Option) bool {
+            return switch (option) {
+                .bool => self == .bool,
+                .int => self == .int,
+                .float => self == .float,
+                .@"enum" => self == .enum_literal,
+                .enum_list => self == .enum_list,
+                .string => self == .string,
+                .list => self == .string_list,
+                .build_id => self == .string,
+                .lazy_path => self == .string,
+                .lazy_path_list => self == .string_list,
+            };
+        }
+    };
 };
 
 pub const OptionsModule = ArrayHashMap(Option);
@@ -514,6 +606,7 @@ pub fn deinit(config: *Config, gpa: std.mem.Allocator) void {
         for (runs.keys()) |k| gpa.free(k);
         runs.deinit();
     }
+    config.profiles.deinit(gpa);
     config.* = undefined;
 }
 
@@ -660,6 +753,8 @@ const Parser = struct {
                 self.config.fmts = try self.parseOptionalHashMap(Fmt, parseFmt, field_value);
             } else if (std.mem.eql(u8, field_name, "runs")) {
                 self.config.runs = try self.parseOptionalHashMap(Run, parseRun, field_value);
+            } else if (std.mem.eql(u8, field_name, "profiles")) {
+                self.config.profiles = try self.parseProfiles(field_value);
             } else {
                 try self.returnParseErrorFmt("unknown field '{s}'", .{field_name}, field_value.getAstNode(self.zoir));
             }
@@ -1111,6 +1206,269 @@ const Parser = struct {
 
     fn parseRun(self: *Self, index: std.zig.Zoir.Node.Index) Error!Run {
         return try self.parseT(Run, index);
+    }
+
+    fn parseProfiles(self: *Self, index: std.zig.Zoir.Node.Index) Error!Profiles {
+        var profiles: Profiles = .{};
+        const n = try self.parseStructLiteral(index);
+
+        profiles.profiles = ArrayHashMap(Profiles.Profile).init(self.gpa);
+        const map = &profiles.profiles.?;
+        var default_field_node: ?std.zig.Zoir.Node.Index = null;
+
+        for (n.names, 0..) |name, i| {
+            const field_name = name.get(self.zoir);
+            const field_value = n.vals.at(@intCast(i));
+
+            if (std.mem.eql(u8, field_name, "default")) {
+                profiles.default_profile = try self.parseEnumLiteral(field_value);
+                default_field_node = field_value;
+            } else {
+                const profile_name = try self.gpa.dupe(u8, field_name);
+                var profile = try self.parseProfile(field_value);
+
+                const gop = try map.getOrPut(profile_name);
+                if (!gop.found_existing) {
+                    gop.value_ptr.* = profile;
+                } else {
+                    self.gpa.free(profile_name);
+                    profile.deinit(self.gpa);
+                    try self.returnParseErrorFmt("duplicate profile '{s}'", .{field_name}, field_value.getAstNode(self.zoir));
+                }
+            }
+        }
+
+        if (profiles.default_profile) |default_profile| {
+            if (map.contains(default_profile)) return profiles;
+
+            const err_node = (default_field_node orelse index).getAstNode(self.zoir);
+            errdefer self.gpa.free(default_profile);
+            try self.returnParseErrorFmt(
+                "default profile '{s}' does not exist",
+                .{default_profile},
+                err_node,
+            );
+        }
+        return profiles;
+    }
+
+    fn parseProfile(self: *Self, index: std.zig.Zoir.Node.Index) Error!Profiles.Profile {
+        var profile = Profiles.Profile{};
+        const n = try self.parseStructLiteral(index);
+        for (n.names, 0..) |name, i| {
+            const field_name = name.get(self.zoir);
+            const field_value = n.vals.at(@intCast(i));
+            if (std.mem.eql(u8, field_name, "options_modules")) {
+                profile.options_modules = try self.parseProfileOptionsModules(field_value);
+            } else {
+                try self.returnParseErrorFmt("unknown field '{s}' in profile", .{field_name}, field_value.getAstNode(self.zoir));
+            }
+        }
+        return profile;
+    }
+
+    fn parseProfileOptionsModules(self: *Self, index: std.zig.Zoir.Node.Index) Error!ArrayHashMap(Profiles.OptionsModule) {
+        const n = try self.parseStructLiteral(index);
+        var modules = ArrayHashMap(Profiles.OptionsModule).init(self.gpa);
+        errdefer {
+            for (modules.values()) |*module| {
+                for (module.values()) |*override| override.deinit(self.gpa);
+                for (module.keys()) |k| self.gpa.free(k);
+                module.deinit();
+            }
+            for (modules.keys()) |k| self.gpa.free(k);
+            modules.deinit();
+        }
+
+        for (n.names, 0..) |name, i| {
+            const module_name = try self.gpa.dupe(u8, name.get(self.zoir));
+            const field_value = n.vals.at(@intCast(i));
+            const module_overrides = try self.parseProfileModuleOverrides(field_value);
+            try modules.put(module_name, module_overrides);
+        }
+
+        return modules;
+    }
+
+    fn parseProfileModuleOverrides(self: *Self, index: std.zig.Zoir.Node.Index) Error!Profiles.OptionsModule {
+        var overrides = Profiles.OptionsModule.init(self.gpa);
+        errdefer {
+            for (overrides.values()) |*override| override.deinit(self.gpa);
+            for (overrides.keys()) |k| self.gpa.free(k);
+            overrides.deinit();
+        }
+
+        const module_struct = try self.parseStructLiteral(index);
+        for (module_struct.names, 0..) |option_name_node, j| {
+            const option_name = try self.gpa.dupe(u8, option_name_node.get(self.zoir));
+            const option_value = module_struct.vals.at(@intCast(j));
+            const override = try self.parseProfileOptionOverride(option_value);
+            try overrides.put(option_name, override);
+        }
+
+        return overrides;
+    }
+
+    fn parseProfileOptionOverride(self: *Self, index: std.zig.Zoir.Node.Index) Error!Profiles.OptionOverride {
+        const literal = try self.parseStructLiteral(index);
+
+        var type_name: ?[]const u8 = null;
+        var value_index: ?std.zig.Zoir.Node.Index = null;
+
+        for (literal.names, 0..) |name_token, i| {
+            const field_name = name_token.get(self.zoir);
+            const field_value = literal.vals.at(@intCast(i));
+            if (std.mem.eql(u8, field_name, "type")) {
+                if (type_name != null) {
+                    try self.returnParseError("duplicate field 'type'", field_value.getAstNode(self.zoir));
+                }
+                type_name = try self.parseString(field_value);
+            } else if (std.mem.eql(u8, field_name, "value")) {
+                if (value_index != null) {
+                    try self.returnParseError("duplicate field 'value'", field_value.getAstNode(self.zoir));
+                }
+                value_index = field_value;
+            } else {
+                try self.returnParseErrorFmt("unknown field '{s}' in profile override", .{field_name}, field_value.getAstNode(self.zoir));
+            }
+        }
+
+        if (type_name == null) {
+            try self.returnParseError("missing required field 'type'", index.getAstNode(self.zoir));
+        }
+        if (value_index == null) {
+            try self.returnParseError("missing required field 'value'", index.getAstNode(self.zoir));
+        }
+
+        const t = type_name.?;
+        defer self.gpa.free(t);
+
+        const value_node = value_index.?;
+        const zon_node = value_node.get(self.zoir);
+
+        if (std.mem.eql(u8, t, "bool")) {
+            return switch (zon_node) {
+                .true => Profiles.OptionOverride{ .bool = true },
+                .false => Profiles.OptionOverride{ .bool = false },
+                else => {
+                    try self.returnParseError("expected a boolean literal", value_node.getAstNode(self.zoir));
+                    unreachable;
+                },
+            };
+        }
+
+        if (Option.isValidIntType(t)) {
+            return switch (zon_node) {
+                .int_literal => |int_literal| Profiles.OptionOverride{ .int = switch (int_literal) {
+                    .small => |s| @as(i64, s),
+                    .big => |b| try b.toInt(i64),
+                } },
+                else => {
+                    try self.returnParseError("expected an integer literal", value_node.getAstNode(self.zoir));
+                    unreachable;
+                },
+            };
+        }
+
+        if (Option.isValidFloatType(t)) {
+            return switch (zon_node) {
+                .float_literal => |float_literal| Profiles.OptionOverride{ .float = @floatCast(float_literal) },
+                else => {
+                    try self.returnParseError("expected a float literal", value_node.getAstNode(self.zoir));
+                    unreachable;
+                },
+            };
+        }
+
+        if (std.mem.eql(u8, t, "enum")) {
+            return switch (zon_node) {
+                .enum_literal => |literal_node| Profiles.OptionOverride{ .enum_literal = try self.gpa.dupe(u8, literal_node.get(self.zoir)) },
+                else => {
+                    try self.returnParseError("expected an enum literal", value_node.getAstNode(self.zoir));
+                    unreachable;
+                },
+            };
+        }
+
+        if (std.mem.eql(u8, t, "enum_list")) {
+            return switch (zon_node) {
+                .array_literal => |array_literal| blk: {
+                    const slice = try self.gpa.alloc([]const u8, array_literal.len);
+                    var filled: usize = 0;
+                    errdefer {
+                        for (0..filled) |k| self.gpa.free(slice[k]);
+                        self.gpa.free(slice);
+                    }
+                    for (0..array_literal.len) |idx| {
+                        const item_index = array_literal.at(@intCast(idx));
+                        switch (item_index.get(self.zoir)) {
+                            .enum_literal => |value| {
+                                slice[filled] = try self.gpa.dupe(u8, value.get(self.zoir));
+                                filled += 1;
+                            },
+                            else => {
+                                try self.returnParseError("mixed value types in enum_list override", item_index.getAstNode(self.zoir));
+                            },
+                        }
+                    }
+                    break :blk Profiles.OptionOverride{ .enum_list = slice };
+                },
+                .empty_literal => Profiles.OptionOverride{ .enum_list = try self.gpa.alloc([]const u8, 0) },
+                else => {
+                    try self.returnParseError("expected an array literal for enum_list override", value_node.getAstNode(self.zoir));
+                    unreachable;
+                },
+            };
+        }
+
+        const string_like = std.mem.eql(u8, t, "string") or
+            std.mem.eql(u8, t, "build_id") or
+            std.mem.eql(u8, t, "lazy_path");
+        if (string_like) {
+            return switch (zon_node) {
+                .string_literal => |literal_node| Profiles.OptionOverride{ .string = try self.gpa.dupe(u8, literal_node) },
+                else => {
+                    try self.returnParseError("expected a string literal", value_node.getAstNode(self.zoir));
+                    unreachable;
+                },
+            };
+        }
+
+        const string_list_like = std.mem.eql(u8, t, "string_list") or
+            std.mem.eql(u8, t, "list") or
+            std.mem.eql(u8, t, "lazy_path_list");
+        if (string_list_like) {
+            return switch (zon_node) {
+                .array_literal => |array_literal| blk: {
+                    const slice = try self.gpa.alloc([]const u8, array_literal.len);
+                    var filled: usize = 0;
+                    errdefer {
+                        for (0..filled) |k| self.gpa.free(slice[k]);
+                        self.gpa.free(slice);
+                    }
+                    for (0..array_literal.len) |idx| {
+                        const item_index = array_literal.at(@intCast(idx));
+                        switch (item_index.get(self.zoir)) {
+                            .string_literal => |value| {
+                                slice[filled] = try self.gpa.dupe(u8, value);
+                                filled += 1;
+                            },
+                            else => {
+                                try self.returnParseError("mixed value types in string_list override", item_index.getAstNode(self.zoir));
+                            },
+                        }
+                    }
+                    break :blk Profiles.OptionOverride{ .string_list = slice };
+                },
+                .empty_literal => Profiles.OptionOverride{ .string_list = try self.gpa.alloc([]const u8, 0) },
+                else => {
+                    try self.returnParseError("expected an array literal for string_list override", value_node.getAstNode(self.zoir));
+                    unreachable;
+                },
+            };
+        }
+
+        try self.returnParseErrorFmt("unsupported profile override type '{s}'", .{t}, index.getAstNode(self.zoir));
     }
 
     fn parseHashMap(

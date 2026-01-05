@@ -1,0 +1,65 @@
+.{
+    .name = .basic,
+    .version = "0.1.0",
+    .fingerprint = 0x90797553d6149cbd,
+    .minimum_zig_version = "0.14.0",
+    .paths = .{"src"},
+    .modules = .{
+        .module_0 = .{
+            .root_source_file = "src/module_0/main.zig",
+            .imports = .{.build_options},
+        },
+    },
+    .executables = .{
+        .exe_0 = .{
+            .root_module = .{
+                .root_source_file = "src/module_0/main.zig",
+                .imports = .{.build_options},
+            },
+        },
+    },
+    .options_modules = .{
+        .build_options = .{
+            .leak_detection_level = .{
+                .type = "enum",
+                .enum_options = .{ .disabled, .paranoid },
+                .default = .disabled,
+            },
+            .threshold = .{
+                .type = "usize",
+                .default = 0,
+            },
+            .debug_mode = .{
+                .type = "bool",
+                .default = true,
+            },
+        },
+    },
+    .profiles = .{
+        .default = .dev,
+        .dev = .{
+            .options_modules = .{
+                .build_options = .{
+                    .leak_detection_level = .{
+                        .type = "enum",
+                        .value = .paranoid,
+                    },
+                    .threshold = .{
+                        .type = "usize",
+                        .value = 1,
+                    },
+                },
+            },
+        },
+        .prod = .{
+            .options_modules = .{
+                .build_options = .{
+                    .threshold = .{
+                        .type = "usize",
+                        .value = 3,
+                    },
+                },
+            },
+        },
+    },
+}

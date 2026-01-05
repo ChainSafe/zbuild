@@ -64,10 +64,47 @@ pub fn write(self: *ConfigBuildgen) !void {
         .{ .indent = 0 },
     );
 
+    const profile_names = self.config.profiles.getProfileNames();
+    if (profile_names.len > 0) {
+        const default_profile = self.config.profiles.default_profile orelse profile_names[0];
+        const enum_body = try self.profileEnumBody(profile_names);
+        defer self.allocator.free(enum_body);
+
+        const dispatch_body = try self.profileDispatchBody(profile_names);
+        defer self.allocator.free(dispatch_body);
+
+        const fallback_tag = try allocFmtId(self.allocator, "profile", default_profile);
+        defer self.allocator.free(fallback_tag);
+
+        const profile_block = try std.fmt.allocPrint(
+            self.allocator,
+            \\    const profile = b.option([]const u8, "profile", "Active build profile") orelse "{s}";
+            \\    const ProfileTag = enum {{
+            \\{s}
+            \\    }};
+            \\    const profile_tag = blk: {{
+            \\{s}
+            \\        }} else {{
+            \\            break :blk ProfileTag.{s};
+            \\        }}
+            \\    }};
+            \\
+        ,
+            .{ default_profile, enum_body, dispatch_body, fallback_tag },
+        );
+        defer self.allocator.free(profile_block);
+
+        try self.writeLn("{s}", .{profile_block}, .{ .indent = 0 });
+    }
+
     // add all config items without linking depends_on, lazy paths, or imports
 
     if (self.config.options) |options| {
-        try self.writeItems(Config.Option, writeOption, options);
+        for (options.keys(), options.values()) |name, option| {
+            // empty string means the option lives at the config top level
+            try self.writeOption("", name, option);
+            try self.writer.writeAll("\n");
+        }
     }
     if (self.config.options_modules) |options_modules| {
         try self.writeItems(Config.OptionsModule, writeOptionsModule, options_modules);
@@ -201,6 +238,41 @@ pub fn write(self: *ConfigBuildgen) !void {
     try self.writeLn("}}", .{}, .{ .indent = 0 });
 }
 
+fn profileEnumBody(self: *ConfigBuildgen, profile_names: []const []const u8) ![]u8 {
+    var buffer = std.ArrayList(u8).init(self.allocator);
+    errdefer buffer.deinit();
+    var writer = buffer.writer();
+
+    for (profile_names) |name| {
+        const tag = try allocFmtId(self.allocator, "profile", name);
+        defer self.allocator.free(tag);
+        try writer.print("        {s},\n", .{tag});
+    }
+
+    return buffer.toOwnedSlice();
+}
+
+fn profileDispatchBody(self: *ConfigBuildgen, profile_names: []const []const u8) ![]u8 {
+    var buffer = std.ArrayList(u8).init(self.allocator);
+    errdefer buffer.deinit();
+    var writer = buffer.writer();
+
+    for (profile_names, 0..) |name, index| {
+        const tag = try allocFmtId(self.allocator, "profile", name);
+        defer self.allocator.free(tag);
+
+        if (index == 0) {
+            try writer.print("        if (std.mem.eql(u8, profile, \"{s}\")) {{\n", .{name});
+        } else {
+            try writer.print("        }} else if (std.mem.eql(u8, profile, \"{s}\")) {{\n", .{name});
+        }
+
+        try writer.print("            break :blk ProfileTag.{s};\n", .{tag});
+    }
+
+    return buffer.toOwnedSlice();
+}
+
 fn writeItems(
     self: *ConfigBuildgen,
     comptime T: type,
@@ -289,7 +361,7 @@ pub fn writeWriteFileItems(self: *ConfigBuildgen, name: []const u8, item: Config
     }
 }
 
-pub fn writeOption(self: *ConfigBuildgen, name: []const u8, item: Config.Option) !void {
+pub fn writeOption(self: *ConfigBuildgen, module_name: []const u8, name: []const u8, item: Config.Option) !void {
     const t, const default, const description = blk: switch (item) {
         .bool => |b| {
             break :blk .{
@@ -299,9 +371,12 @@ pub fn writeOption(self: *ConfigBuildgen, name: []const u8, item: Config.Option)
             };
         },
         .@"enum" => |e| {
+            // Define a named enum type so we can use it in runtime control flow
+            const enum_id = try allocFmtId(self.allocator, "Enum", name);
+            try self.writeLn("const {s} = enum {s};", .{ enum_id, e.enum_options }, .{});
             break :blk .{
-                try std.fmt.allocPrint(self.allocator, "enum {s}", .{e.enum_options}),
-                if (e.default) |d| try std.fmt.allocPrint(self.allocator, ".{s}", .{d}) else null,
+                enum_id,
+                if (e.default) |d| try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ enum_id, d }) else null,
                 e.description,
             };
         },
@@ -365,10 +440,69 @@ pub fn writeOption(self: *ConfigBuildgen, name: []const u8, item: Config.Option)
         },
     };
 
+    var override_list = std.ArrayList(struct { tag: []const u8, expr: []const u8 }).init(self.allocator);
+    defer {
+        for (override_list.items) |ov| {
+            self.allocator.free(ov.tag);
+            self.allocator.free(ov.expr);
+        }
+        override_list.deinit();
+    }
+
+    const profile_names = self.config.profiles.getProfileNames();
+    for (profile_names) |profile_name| {
+        if (self.config.profiles.getOverride(profile_name, module_name, name)) |override_ptr| {
+            if (!override_ptr.isCompatible(item)) {
+                return error.ProfileOverrideTypeMismatch;
+            }
+            const expr = try self.formatProfileOverride(override_ptr.*, t);
+            const tag = try allocFmtId(self.allocator, "profile", profile_name);
+            try override_list.append(.{ .tag = tag, .expr = expr });
+        }
+    }
+
+    const override_count = override_list.items.len;
+    const all_profiles_covered = override_count == profile_names.len;
+
+    var final_default_expr: ?[]const u8 = default;
+    var switch_id: ?[]const u8 = null;
+
+    if (override_count > 0) {
+        if (!all_profiles_covered and default == null) return error.MissingProfileFallback;
+
+        switch_id = try allocFmtId(self.allocator, "profile_default", name);
+
+        try self.writeLn(
+            "const {s} = switch (profile_tag) {{",
+            .{switch_id.?},
+            .{},
+        );
+
+        for (override_list.items) |ov| {
+            try self.writeLn(
+                ".{s} => {s},",
+                .{ ov.tag, ov.expr },
+                .{ .indent = 8 },
+            );
+        }
+
+        if (!all_profiles_covered) {
+            try self.writeLn(
+                "else => {s},",
+                .{default.?},
+                .{ .indent = 8 },
+            );
+        }
+
+        try self.writeLn("}};", .{}, .{});
+
+        final_default_expr = switch_id.?;
+    }
+
     const option_id = try allocFmtId(self.allocator, "option", name);
     defer self.allocator.free(option_id);
 
-    if (default) |d| {
+    if (final_default_expr) |d| {
         try self.writeLn(
             \\const {s} = b.option({s}, "{s}", "{s}") orelse {s};
         ,
@@ -384,7 +518,32 @@ pub fn writeOption(self: *ConfigBuildgen, name: []const u8, item: Config.Option)
         );
     }
 
-    try self.options.put(name, .{ .type_name = t, .optional = default == null });
+    const has_default = final_default_expr != null;
+    try self.options.put(name, .{ .type_name = t, .optional = !has_default });
+
+    if (switch_id) |owned_switch_id| {
+        self.allocator.free(owned_switch_id);
+    }
+}
+
+fn formatProfileOverride(self: *ConfigBuildgen, override: Config.Profiles.OptionOverride, type_name: []const u8) ![]const u8 {
+    return switch (override) {
+        .bool => |v| try std.fmt.allocPrint(self.allocator, "{}", .{v}),
+        .int => |v| try std.fmt.allocPrint(self.allocator, "@as({s}, {})", .{ type_name, v }),
+        .float => |v| try std.fmt.allocPrint(self.allocator, "@as({s}, {d})", .{ type_name, v }),
+        .enum_literal => |v| try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ type_name, v }),
+        .enum_list => |v| blk: {
+            const literal_ref = try enumSliceLiteral(type_name, v);
+            const literal = try self.allocator.dupe(u8, literal_ref);
+            break :blk literal;
+        },
+        .string => |v| try std.fmt.allocPrint(self.allocator, "\"{s}\"", .{v}),
+        .string_list => |v| blk: {
+            const literal_ref = (try strSliceLiteral(v)) orelse "&[_][]const u8{}";
+            const literal = try self.allocator.dupe(u8, literal_ref);
+            break :blk literal;
+        },
+    };
 }
 
 pub fn writeOptionsModule(self: *ConfigBuildgen, name: []const u8, item: Config.OptionsModule) !void {
@@ -398,7 +557,7 @@ pub fn writeOptionsModule(self: *ConfigBuildgen, name: []const u8, item: Config.
     );
 
     for (item.keys(), item.values()) |option_name, value| {
-        try self.writeOption(option_name, value);
+        try self.writeOption(name, option_name, value);
         const option = self.options.get(option_name) orelse return error.MissingOption;
         const option_id = try allocFmtId(self.allocator, "option", option_name);
         defer self.allocator.free(option_id);
