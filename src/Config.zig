@@ -24,7 +24,7 @@ objects: ?ArrayHashMap(Object) = null,
 tests: ?ArrayHashMap(Test) = null,
 fmts: ?ArrayHashMap(Fmt) = null,
 runs: ?ArrayHashMap(Run) = null,
-profiles: Profiles = .{},
+profiles: ?Profiles = null,
 
 pub const Dependency = struct {
     typ: enum { path, url },
@@ -224,7 +224,7 @@ pub const Option = union(enum) {
 
 pub const Profiles = struct {
     profiles: ?ArrayHashMap(Profile) = null,
-    default_profile: ?[]const u8 = null,
+    active_profile: ?[]const u8 = null,
 
     pub fn deinit(self: *Profiles, gpa: std.mem.Allocator) void {
         if (self.profiles) |*map| {
@@ -232,7 +232,7 @@ pub const Profiles = struct {
             for (map.keys()) |k| gpa.free(k);
             map.deinit();
         }
-        if (self.default_profile) |d| gpa.free(d);
+        if (self.active_profile) |a| gpa.free(a);
     }
 
     pub fn getProfileNames(self: Profiles) []const []const u8 {
@@ -606,7 +606,7 @@ pub fn deinit(config: *Config, gpa: std.mem.Allocator) void {
         for (runs.keys()) |k| gpa.free(k);
         runs.deinit();
     }
-    config.profiles.deinit(gpa);
+    if (config.profiles) |*profiles| profiles.deinit(gpa);
     config.* = undefined;
 }
 
@@ -1209,20 +1209,24 @@ const Parser = struct {
     }
 
     fn parseProfiles(self: *Self, index: std.zig.Zoir.Node.Index) Error!Profiles {
-        var profiles: Profiles = .{};
+        var profiles: Profiles = .{
+            .profiles = ArrayHashMap(Profiles.Profile).init(self.gpa),
+        };
+        errdefer profiles.deinit(self.gpa);
         const n = try self.parseStructLiteral(index);
 
-        profiles.profiles = ArrayHashMap(Profiles.Profile).init(self.gpa);
         const map = &profiles.profiles.?;
-        var default_field_node: ?std.zig.Zoir.Node.Index = null;
+        var active_field_node: ?std.zig.Zoir.Node.Index = null;
+        var has_active_profile = false;
 
         for (n.names, 0..) |name, i| {
             const field_name = name.get(self.zoir);
             const field_value = n.vals.at(@intCast(i));
 
-            if (std.mem.eql(u8, field_name, "default")) {
-                profiles.default_profile = try self.parseEnumLiteral(field_value);
-                default_field_node = field_value;
+            if (std.mem.eql(u8, field_name, "active")) {
+                profiles.active_profile = try self.parseEnumLiteral(field_value);
+                has_active_profile = true;
+                active_field_node = field_value;
             } else {
                 const profile_name = try self.gpa.dupe(u8, field_name);
                 var profile = try self.parseProfile(field_value);
@@ -1238,14 +1242,22 @@ const Parser = struct {
             }
         }
 
-        if (profiles.default_profile) |default_profile| {
-            if (map.contains(default_profile)) return profiles;
+        if (map.count() == 0) {
+            const err_node = index.getAstNode(self.zoir);
+            try self.returnParseError("profiles must define at least one profile", err_node);
+        }
 
-            const err_node = (default_field_node orelse index).getAstNode(self.zoir);
-            errdefer self.gpa.free(default_profile);
+        if (!has_active_profile) {
+            const err_node = index.getAstNode(self.zoir);
+            try self.returnParseError("profiles must specify 'active'", err_node);
+        }
+
+        const active_profile = profiles.active_profile.?;
+        if (!map.contains(active_profile)) {
+            const err_node = (active_field_node orelse index).getAstNode(self.zoir);
             try self.returnParseErrorFmt(
-                "default profile '{s}' does not exist",
-                .{default_profile},
+                "active profile '{s}' does not exist",
+                .{active_profile},
                 err_node,
             );
         }
@@ -1253,16 +1265,19 @@ const Parser = struct {
     }
 
     fn parseProfile(self: *Self, index: std.zig.Zoir.Node.Index) Error!Profiles.Profile {
-        var profile = Profiles.Profile{};
+        var profile: Profiles.Profile = .{};
+        errdefer profile.deinit(self.gpa);
         const n = try self.parseStructLiteral(index);
-        for (n.names, 0..) |name, i| {
-            const field_name = name.get(self.zoir);
-            const field_value = n.vals.at(@intCast(i));
-            if (std.mem.eql(u8, field_name, "options_modules")) {
-                profile.options_modules = try self.parseProfileOptionsModules(field_value);
-            } else {
-                try self.returnParseErrorFmt("unknown field '{s}' in profile", .{field_name}, field_value.getAstNode(self.zoir));
-            }
+        if (n.names.len != 1) {
+            try self.returnParseError("profile must specify exactly one field 'options_modules'", index.getAstNode(self.zoir));
+        }
+
+        const field_name = n.names[0].get(self.zoir);
+        const field_value = n.vals.at(0);
+        if (std.mem.eql(u8, field_name, "options_modules")) {
+            profile.options_modules = try self.parseProfileOptionsModules(field_value);
+        } else {
+            try self.returnParseErrorFmt("unknown field '{s}' in profile", .{field_name}, field_value.getAstNode(self.zoir));
         }
         return profile;
     }
@@ -1282,8 +1297,10 @@ const Parser = struct {
 
         for (n.names, 0..) |name, i| {
             const module_name = try self.gpa.dupe(u8, name.get(self.zoir));
+            errdefer self.gpa.free(module_name);
             const field_value = n.vals.at(@intCast(i));
-            const module_overrides = try self.parseProfileModuleOverrides(field_value);
+            var module_overrides = try self.parseProfileModuleOverrides(field_value);
+            errdefer module_overrides.deinit();
             try modules.put(module_name, module_overrides);
         }
 
@@ -1301,8 +1318,10 @@ const Parser = struct {
         const module_struct = try self.parseStructLiteral(index);
         for (module_struct.names, 0..) |option_name_node, j| {
             const option_name = try self.gpa.dupe(u8, option_name_node.get(self.zoir));
+            errdefer self.gpa.free(option_name);
             const option_value = module_struct.vals.at(@intCast(j));
-            const override = try self.parseProfileOptionOverride(option_value);
+            var override = try self.parseProfileOptionOverride(option_value);
+            errdefer override.deinit(self.gpa);
             try overrides.put(option_name, override);
         }
 
@@ -1352,7 +1371,6 @@ const Parser = struct {
                 .false => Profiles.OptionOverride{ .bool = false },
                 else => {
                     try self.returnParseError("expected a boolean literal", value_node.getAstNode(self.zoir));
-                    unreachable;
                 },
             };
         }
@@ -1365,7 +1383,6 @@ const Parser = struct {
                 } },
                 else => {
                     try self.returnParseError("expected an integer literal", value_node.getAstNode(self.zoir));
-                    unreachable;
                 },
             };
         }
@@ -1375,7 +1392,6 @@ const Parser = struct {
                 .float_literal => |float_literal| Profiles.OptionOverride{ .float = @floatCast(float_literal) },
                 else => {
                     try self.returnParseError("expected a float literal", value_node.getAstNode(self.zoir));
-                    unreachable;
                 },
             };
         }
@@ -1385,7 +1401,6 @@ const Parser = struct {
                 .enum_literal => |literal_node| Profiles.OptionOverride{ .enum_literal = try self.gpa.dupe(u8, literal_node.get(self.zoir)) },
                 else => {
                     try self.returnParseError("expected an enum literal", value_node.getAstNode(self.zoir));
-                    unreachable;
                 },
             };
         }
@@ -1416,7 +1431,6 @@ const Parser = struct {
                 .empty_literal => Profiles.OptionOverride{ .enum_list = try self.gpa.alloc([]const u8, 0) },
                 else => {
                     try self.returnParseError("expected an array literal for enum_list override", value_node.getAstNode(self.zoir));
-                    unreachable;
                 },
             };
         }
@@ -1429,7 +1443,6 @@ const Parser = struct {
                 .string_literal => |literal_node| Profiles.OptionOverride{ .string = try self.gpa.dupe(u8, literal_node) },
                 else => {
                     try self.returnParseError("expected a string literal", value_node.getAstNode(self.zoir));
-                    unreachable;
                 },
             };
         }
@@ -1463,7 +1476,6 @@ const Parser = struct {
                 .empty_literal => Profiles.OptionOverride{ .string_list = try self.gpa.alloc([]const u8, 0) },
                 else => {
                     try self.returnParseError("expected an array literal for string_list override", value_node.getAstNode(self.zoir));
-                    unreachable;
                 },
             };
         }
