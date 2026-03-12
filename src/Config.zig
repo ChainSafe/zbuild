@@ -298,6 +298,7 @@ pub const Module = struct {
     omit_frame_pointer: ?bool = null,
     error_tracing: ?bool = null,
     include_paths: ?[][]const u8 = null,
+    link_libraries: ?[][]const u8 = null,
 
     pub fn deinit(self: *Module, gpa: std.mem.Allocator) void {
         if (self.name) |n| gpa.free(n);
@@ -305,6 +306,10 @@ pub const Module = struct {
         if (self.imports) |i| {
             for (i) |ii| gpa.free(ii);
             gpa.free(i);
+        }
+        if (self.link_libraries) |l| {
+            for (l) |ll| gpa.free(ll);
+            gpa.free(l);
         }
         if (self.target) |t| gpa.free(t);
     }
@@ -946,6 +951,8 @@ const Parser = struct {
                 module.error_tracing = try self.parseBool(field_value);
             } else if (std.mem.eql(u8, field_name, "include_paths")) {
                 module.include_paths = try self.parseOptionalSlice([]const u8, parseString, field_value);
+            } else if (std.mem.eql(u8, field_name, "link_libraries")) {
+                module.link_libraries = try self.parseOptionalSlice([]const u8, parseString, field_value);
             }
         }
         return module;
