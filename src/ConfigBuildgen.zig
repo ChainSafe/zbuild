@@ -192,6 +192,16 @@ pub fn write(self: *ConfigBuildgen) !void {
                     }
                 }
             }
+            if (module.link_libraries) |link_libraries| {
+                for (link_libraries) |link_library| {
+                    var parts = std.mem.splitScalar(u8, link_library, ':');
+                    const dep_name = parts.first();
+                    if (std.mem.eql(u8, name, dep_name)) {
+                        dependency_unused = false;
+                        break :blk;
+                    }
+                }
+            }
         }
         if (dependency_unused) {
             try self.writeLn("_ = {s};", .{try fmtId("dep", name)}, .{});
@@ -470,6 +480,24 @@ pub fn writeModule(self: *ConfigBuildgen, name: []const u8, item: Config.Module)
                 \\{s}.addIncludePath({s});
             ,
                 .{ module_id, try self.resolveLazyPath(path, SourcesForModules) },
+                .{},
+            );
+        }
+    }
+
+    if (item.link_libraries) |link_libraries| {
+        for (link_libraries) |link_library| {
+            var parts = std.mem.splitScalar(u8, link_library, ':');
+            const dep_name = parts.first();
+            const artifact_name = if (parts.next()) |rest| rest else dep_name;
+
+            const dep_id = try allocFmtId(self.allocator, "dep", dep_name);
+            defer self.allocator.free(dep_id);
+
+            try self.writeLn(
+                \\{s}.linkLibrary({s}.artifact("{s}"));
+            ,
+                .{ module_id, dep_id, artifact_name },
                 .{},
             );
         }
