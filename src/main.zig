@@ -105,6 +105,7 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: *Args) !void {
 
     var wip_bundle: std.zig.ErrorBundle.Wip = undefined;
     try wip_bundle.init(gpa);
+    defer wip_bundle.deinit();
     const config = Config.parseFromFile(arena, global_opts.zbuild_file, &wip_bundle) catch |err| switch (err) {
         error.FileNotFound => {
             fatal("no build.zig.zon file found", .{});

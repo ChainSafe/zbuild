@@ -903,7 +903,18 @@ const Parser = struct {
 
     fn returnParseErrorFmt(self: *Parser, comptime fmt: []const u8, args: anytype, node_index: std.zig.Ast.Node.Index) Error!noreturn {
         const message = try std.fmt.allocPrint(self.gpa, fmt, args);
-        try self.returnParseError(message, node_index);
+        self.status.* = .{
+            .ast = self.ast,
+            .zoir = self.zoir,
+            .type_check = .{
+                .message = message,
+                .owned = true,
+                .token = self.ast.firstToken(node_index),
+                .offset = 0,
+                .note = null,
+            },
+        };
+        return error.ParseZon;
     }
 
     fn returnParseError(self: *Parser, message: []const u8, node_index: std.zig.Ast.Node.Index) Error!noreturn {
