@@ -954,41 +954,41 @@ fn Serializer(Writer: type) type {
                 }
                 try exes.end();
             }
-            // if (self.config.libraries) |libraries| {
-            //     const libs = try top_level.beginStructField("libraries", .{});
-            //     for (libraries.keys(), libraries.values()) |name, item| {
-            //         try self.serializeLibrary(libs, name, item);
-            //     }
-            //     try libs.end();
-            // }
-            // if (self.config.objects) |objects| {
-            //     const objs = try top_level.beginStructField("objects", .{});
-            //     for (objects.keys(), objects.values()) |name, item| {
-            //         try self.serializeObject(objs, name, item);
-            //     }
-            //     try objs.end();
-            // }
-            // if (self.config.tests) |tests| {
-            //     const tsts = try top_level.beginStructField("tests", .{});
-            //     for (tests.keys(), tests.values()) |name, item| {
-            //         try self.serializeTest(tsts, name, item);
-            //     }
-            //     try tsts.end();
-            // }
-            // if (self.config.fmts) |fmts| {
-            //     const f = try top_level.beginStructField("fmts", .{});
-            //     for (fmts.keys(), fmts.values()) |name, item| {
-            //         try self.serializeFmt(f, name, item);
-            //     }
-            //     try f.end();
-            // }
-            // if (self.config.runs) |runs| {
-            //     const r = try top_level.beginStructField("runs", .{});
-            //     for (runs.keys(), runs.values()) |name, item| {
-            //         try self.serializeRun(r, name, item);
-            //     }
-            //     try r.end();
-            // }
+            if (self.config.libraries) |libraries| {
+                var libs = try top_level.beginStructField("libraries", .{});
+                for (libraries.keys(), libraries.values()) |name, item| {
+                    try serializeLibrary(&libs, name, item);
+                }
+                try libs.end();
+            }
+            if (self.config.objects) |objects| {
+                var objs = try top_level.beginStructField("objects", .{});
+                for (objects.keys(), objects.values()) |name, item| {
+                    try serializeObject(&objs, name, item);
+                }
+                try objs.end();
+            }
+            if (self.config.tests) |tests_map| {
+                var tsts = try top_level.beginStructField("tests", .{});
+                for (tests_map.keys(), tests_map.values()) |name, item| {
+                    try serializeTest(&tsts, name, item);
+                }
+                try tsts.end();
+            }
+            if (self.config.fmts) |fmts| {
+                var f = try top_level.beginStructField("fmts", .{});
+                for (fmts.keys(), fmts.values()) |name, item| {
+                    try f.field(name, item, .{ .emit_default_optional_fields = false });
+                }
+                try f.end();
+            }
+            if (self.config.runs) |runs| {
+                var r = try top_level.beginStructField("runs", .{});
+                for (runs.keys(), runs.values()) |name, item| {
+                    try r.field(name, item, .{});
+                }
+                try r.end();
+            }
             try top_level.end();
         }
 
@@ -1001,6 +1001,12 @@ fn Serializer(Writer: type) type {
             switch (item.typ) {
                 .path => try inner.field("path", item.value, .{}),
                 .url => try inner.field("url", item.value, .{}),
+            }
+            if (item.hash) |hash| {
+                try inner.field("hash", hash, .{});
+            }
+            if (item.lazy) |lazy| {
+                try inner.field("lazy", lazy, .{});
             }
             if (item.args) |args| {
                 var args_inner = try inner.beginStructField("args", .{});
@@ -1084,14 +1090,44 @@ fn Serializer(Writer: type) type {
                     try outer.field(name, b, .{ .emit_default_optional_fields = false });
                 },
                 .@"enum" => |e| {
-                    _ = e;
-                    // TODO
-                    // try opts.field(name, e, .{ .emit_default_optional_fields = false });
+                    var inner = try outer.beginStructField(name, .{});
+                    try inner.field("type", e.type, .{});
+                    if (e.description) |desc| {
+                        try inner.field("description", desc, .{});
+                    }
+                    if (e.default) |default| {
+                        try inner.fieldPrefix("default");
+                        try inner.container.serializer.writer.print(".{}", .{std.zig.fmtId(default)});
+                    }
+                    var opts_arr = try inner.beginArrayField("enum_options", .{});
+                    for (e.enum_options) |opt| {
+                        try opts_arr.fieldPrefix();
+                        try opts_arr.container.serializer.writer.print(".{}", .{std.zig.fmtId(opt)});
+                    }
+                    try opts_arr.end();
+                    try inner.end();
                 },
                 .enum_list => |el| {
-                    _ = el;
-                    // TODO
-                    // try opts.field(name, el, .{ .emit_default_optional_fields = false });
+                    var inner = try outer.beginStructField(name, .{});
+                    try inner.field("type", el.type, .{});
+                    if (el.description) |desc| {
+                        try inner.field("description", desc, .{});
+                    }
+                    if (el.default) |defaults| {
+                        var default_arr = try inner.beginArrayField("default", .{});
+                        for (defaults) |d| {
+                            try default_arr.fieldPrefix();
+                            try default_arr.container.serializer.writer.print(".{}", .{std.zig.fmtId(d)});
+                        }
+                        try default_arr.end();
+                    }
+                    var opts_arr = try inner.beginArrayField("enum_options", .{});
+                    for (el.enum_options) |opt| {
+                        try opts_arr.fieldPrefix();
+                        try opts_arr.container.serializer.writer.print(".{}", .{std.zig.fmtId(opt)});
+                    }
+                    try opts_arr.end();
+                    try inner.end();
                 },
                 .string => |s| {
                     try outer.field(name, s, .{ .emit_default_optional_fields = false });
@@ -1159,6 +1195,129 @@ fn Serializer(Writer: type) type {
             }
             if (item.depends_on) |depends_on| {
                 try inner.field("depends_on", depends_on, .{});
+            }
+            try inner.end();
+        }
+
+        fn serializeLibrary(
+            outer: *std.zon.stringify.Serializer(Writer).Struct,
+            name: []const u8,
+            item: Library,
+        ) !void {
+            var inner = try outer.beginStructField(name, .{});
+            if (item.name) |n| {
+                try inner.field("name", n, .{});
+            }
+            if (item.version) |version| {
+                try inner.field("version", version, .{});
+            }
+            switch (item.root_module) {
+                .name => |n| {
+                    try inner.field("root_module", n, .{});
+                },
+                .module => |m| {
+                    try serializeModule(&inner, "root_module", m);
+                },
+            }
+            if (item.linkage) |linkage| {
+                try inner.field("linkage", linkage, .{});
+            }
+            if (item.max_rss) |max_rss| {
+                try inner.field("max_rss", max_rss, .{});
+            }
+            if (item.use_llvm) |use_llvm| {
+                try inner.field("use_llvm", use_llvm, .{});
+            }
+            if (item.use_lld) |use_lld| {
+                try inner.field("use_lld", use_lld, .{});
+            }
+            if (item.zig_lib_dir) |zig_lib_dir| {
+                try inner.field("zig_lib_dir", zig_lib_dir, .{});
+            }
+            if (item.win32_manifest) |win32_manifest| {
+                try inner.field("win32_manifest", win32_manifest, .{});
+            }
+            if (item.linker_allow_shlib_undefined) |v| {
+                try inner.field("linker_allow_shlib_undefined", v, .{});
+            }
+            if (item.dest_sub_path) |dest_sub_path| {
+                try inner.field("dest_sub_path", dest_sub_path, .{});
+            }
+            if (item.depends_on) |depends_on| {
+                try inner.field("depends_on", depends_on, .{});
+            }
+            try inner.end();
+        }
+
+        fn serializeObject(
+            outer: *std.zon.stringify.Serializer(Writer).Struct,
+            name: []const u8,
+            item: Object,
+        ) !void {
+            var inner = try outer.beginStructField(name, .{});
+            if (item.name) |n| {
+                try inner.field("name", n, .{});
+            }
+            switch (item.root_module) {
+                .name => |n| {
+                    try inner.field("root_module", n, .{});
+                },
+                .module => |m| {
+                    try serializeModule(&inner, "root_module", m);
+                },
+            }
+            if (item.max_rss) |max_rss| {
+                try inner.field("max_rss", max_rss, .{});
+            }
+            if (item.use_llvm) |use_llvm| {
+                try inner.field("use_llvm", use_llvm, .{});
+            }
+            if (item.use_lld) |use_lld| {
+                try inner.field("use_lld", use_lld, .{});
+            }
+            if (item.zig_lib_dir) |zig_lib_dir| {
+                try inner.field("zig_lib_dir", zig_lib_dir, .{});
+            }
+            if (item.depends_on) |depends_on| {
+                try inner.field("depends_on", depends_on, .{});
+            }
+            try inner.end();
+        }
+
+        fn serializeTest(
+            outer: *std.zon.stringify.Serializer(Writer).Struct,
+            name: []const u8,
+            item: Test,
+        ) !void {
+            var inner = try outer.beginStructField(name, .{});
+            if (item.name) |n| {
+                try inner.field("name", n, .{});
+            }
+            switch (item.root_module) {
+                .name => |n| {
+                    try inner.field("root_module", n, .{});
+                },
+                .module => |m| {
+                    try serializeModule(&inner, "root_module", m);
+                },
+            }
+            if (item.max_rss) |max_rss| {
+                try inner.field("max_rss", max_rss, .{});
+            }
+            if (item.use_llvm) |use_llvm| {
+                try inner.field("use_llvm", use_llvm, .{});
+            }
+            if (item.use_lld) |use_lld| {
+                try inner.field("use_lld", use_lld, .{});
+            }
+            if (item.zig_lib_dir) |zig_lib_dir| {
+                try inner.field("zig_lib_dir", zig_lib_dir, .{});
+            }
+            if (item.filters.len > 0) {
+                try inner.field("filters", item.filters, .{});
+            }
+            if (item.test_runner) |test_runner| {
+                try inner.field("test_runner", test_runner, .{});
             }
             try inner.end();
         }
@@ -1582,4 +1741,189 @@ test "parse config with fmts" {
     try std.testing.expectEqual(true, check.check.?);
     const fmt_paths = check.paths orelse return error.ExpectedPaths;
     try std.testing.expectEqual(@as(usize, 1), fmt_paths.len);
+}
+
+// -- Serializer round-trip tests --
+
+fn testSerializeRoundTrip(source: [:0]const u8) !void {
+    const gpa = std.testing.allocator;
+
+    // Phase 1: Parse original
+    const config = try testParse(source);
+
+    // Phase 2: Serialize to string
+    var buf = std.ArrayList(u8).init(gpa);
+    defer buf.deinit();
+    try serialize(config, buf.writer());
+
+    // Phase 3: Re-parse the serialized output
+    const serialized = try buf.toOwnedSliceSentinel(0);
+    defer gpa.free(serialized);
+
+    const config2 = try testParse(serialized);
+
+    // Phase 4: Compare key fields
+    try std.testing.expectEqualStrings(config.name, config2.name);
+    try std.testing.expectEqualStrings(config.version, config2.version);
+    try std.testing.expectEqual(config.fingerprint, config2.fingerprint);
+    try std.testing.expectEqualStrings(config.minimum_zig_version, config2.minimum_zig_version);
+    try std.testing.expectEqual(config.paths.len, config2.paths.len);
+
+    // Compare optional sections presence
+    try std.testing.expectEqual(config.modules != null, config2.modules != null);
+    try std.testing.expectEqual(config.executables != null, config2.executables != null);
+    try std.testing.expectEqual(config.libraries != null, config2.libraries != null);
+    try std.testing.expectEqual(config.objects != null, config2.objects != null);
+    try std.testing.expectEqual(config.tests != null, config2.tests != null);
+    try std.testing.expectEqual(config.fmts != null, config2.fmts != null);
+    try std.testing.expectEqual(config.runs != null, config2.runs != null);
+    try std.testing.expectEqual(config.dependencies != null, config2.dependencies != null);
+
+    // Compare counts where present
+    if (config.modules) |m| try std.testing.expectEqual(m.count(), config2.modules.?.count());
+    if (config.executables) |e| try std.testing.expectEqual(e.count(), config2.executables.?.count());
+    if (config.libraries) |l| try std.testing.expectEqual(l.count(), config2.libraries.?.count());
+    if (config.tests) |t| try std.testing.expectEqual(t.count(), config2.tests.?.count());
+    if (config.runs) |r| try std.testing.expectEqual(r.count(), config2.runs.?.count());
+    if (config.dependencies) |d| try std.testing.expectEqual(d.count(), config2.dependencies.?.count());
+}
+
+test "serialize round-trip: minimal config" {
+    try testSerializeRoundTrip(
+        \\.{
+        \\    .name = .basic,
+        \\    .version = "0.1.0",
+        \\    .fingerprint = 0x90797553773ca567,
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\}
+    );
+}
+
+test "serialize round-trip: config with modules" {
+    try testSerializeRoundTrip(
+        \\.{
+        \\    .name = .mylib,
+        \\    .version = "1.0.0",
+        \\    .fingerprint = 0x1234567890abcdef,
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\    .modules = .{
+        \\        .core = .{
+        \\            .root_source_file = "src/core.zig",
+        \\            .link_libc = true,
+        \\        },
+        \\    },
+        \\}
+    );
+}
+
+test "serialize round-trip: config with executables" {
+    try testSerializeRoundTrip(
+        \\.{
+        \\    .name = .myapp,
+        \\    .version = "0.2.0",
+        \\    .fingerprint = 0xabcdef1234567890,
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\    .executables = .{
+        \\        .main = .{
+        \\            .root_module = .{
+        \\                .root_source_file = "src/main.zig",
+        \\            },
+        \\        },
+        \\    },
+        \\}
+    );
+}
+
+test "serialize round-trip: config with libraries" {
+    try testSerializeRoundTrip(
+        \\.{
+        \\    .name = .mylib,
+        \\    .version = "1.0.0",
+        \\    .fingerprint = 0x2222222222222222,
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\    .libraries = .{
+        \\        .mylib = .{
+        \\            .root_module = .{
+        \\                .root_source_file = "src/lib.zig",
+        \\            },
+        \\            .version = "2.0.0",
+        \\        },
+        \\    },
+        \\}
+    );
+}
+
+test "serialize round-trip: config with tests" {
+    try testSerializeRoundTrip(
+        \\.{
+        \\    .name = .mylib,
+        \\    .version = "1.0.0",
+        \\    .fingerprint = 0x3333333333333333,
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\    .tests = .{
+        \\        .unit = .{
+        \\            .root_module = .{
+        \\                .root_source_file = "src/test.zig",
+        \\            },
+        \\        },
+        \\    },
+        \\}
+    );
+}
+
+test "serialize round-trip: config with runs" {
+    try testSerializeRoundTrip(
+        \\.{
+        \\    .name = .myapp,
+        \\    .version = "1.0.0",
+        \\    .fingerprint = 0x4444444444444444,
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\    .runs = .{
+        \\        .docs = "echo hello",
+        \\    },
+        \\}
+    );
+}
+
+test "serialize round-trip: config with dependencies including hash and lazy" {
+    try testSerializeRoundTrip(
+        \\.{
+        \\    .name = .myapp,
+        \\    .version = "0.1.0",
+        \\    .fingerprint = 0x1111111111111111,
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\    .dependencies = .{
+        \\        .zlib = .{
+        \\            .url = "https://example.com/zlib.tar.gz",
+        \\            .hash = "abc123",
+        \\            .lazy = true,
+        \\        },
+        \\    },
+        \\}
+    );
+}
+
+test "serialize round-trip: config with fmts" {
+    try testSerializeRoundTrip(
+        \\.{
+        \\    .name = .myapp,
+        \\    .version = "1.0.0",
+        \\    .fingerprint = 0xaaaaaaaaaaaaaaaa,
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\    .fmts = .{
+        \\        .check = .{
+        \\            .paths = .{"src"},
+        \\            .check = true,
+        \\        },
+        \\    },
+        \\}
+    );
 }
