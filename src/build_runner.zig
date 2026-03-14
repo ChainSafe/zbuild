@@ -111,36 +111,128 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype) !void {
 }
 
 // --- Manifest validation ---
-
-const zbuild_fields = .{
-    "modules",      "executables", "libraries",    "objects",
-    "tests",        "fmts",        "runs",         "options_modules",
-    "dependencies",
-};
-
-const zig_manifest_fields = .{
-    "name",                "version",           "fingerprint",
-    "minimum_zig_version", "paths",             "description",
-    "keywords",
-};
+//
+// Cross-reference checks run at comptime so typos in module names,
+// dependency references, and artifact names become compile errors.
 
 fn validateManifest(comptime manifest: anytype) void {
-    const fields = @typeInfo(@TypeOf(manifest)).@"struct".fields;
-    inline for (fields) |field| {
-        if (!isKnownField(field.name)) {
-            @compileError("unknown field '" ++ field.name ++ "' in build.zig.zon");
+    // Validate root_module name references point to declared modules
+    inline for (.{ "executables", "libraries", "objects", "tests" }) |section| {
+        if (@hasField(@TypeOf(manifest), section)) {
+            inline for (@typeInfo(@TypeOf(@field(manifest, section))).@"struct".fields) |field| {
+                const item = @field(@field(manifest, section), field.name);
+                validateRootModuleRef(manifest, item.root_module, section, field.name);
+            }
+        }
+    }
+
+    // Validate depends_on references point to declared artifacts
+    inline for (.{ "executables", "libraries", "objects" }) |section| {
+        if (@hasField(@TypeOf(manifest), section)) {
+            inline for (@typeInfo(@TypeOf(@field(manifest, section))).@"struct".fields) |field| {
+                const item = @field(@field(manifest, section), field.name);
+                if (@hasField(@TypeOf(item), "depends_on")) {
+                    validateDependsOn(manifest, item.depends_on, section, field.name);
+                }
+            }
+        }
+    }
+
+    // Validate imports reference declared modules, options_modules, or dependencies
+    if (@hasField(@TypeOf(manifest), "modules")) {
+        inline for (@typeInfo(@TypeOf(manifest.modules)).@"struct".fields) |field| {
+            const mod = @field(manifest.modules, field.name);
+            if (@hasField(@TypeOf(mod), "imports")) {
+                validateImports(manifest, mod.imports, "modules", field.name);
+            }
+        }
+    }
+    inline for (.{ "executables", "libraries", "objects", "tests" }) |section| {
+        if (@hasField(@TypeOf(manifest), section)) {
+            inline for (@typeInfo(@TypeOf(@field(manifest, section))).@"struct".fields) |field| {
+                const item = @field(@field(manifest, section), field.name);
+                if (@typeInfo(@TypeOf(item.root_module)) == .@"struct") {
+                    if (@hasField(@TypeOf(item.root_module), "imports")) {
+                        validateImports(manifest, item.root_module.imports, section, field.name);
+                    }
+                }
+            }
         }
     }
 }
 
-fn isKnownField(comptime name: []const u8) bool {
-    inline for (zbuild_fields) |f| {
-        if (std.mem.eql(u8, name, f)) return true;
+fn validateRootModuleRef(comptime manifest: anytype, comptime root_module: anytype, comptime section: []const u8, comptime name: []const u8) void {
+    const ti = @typeInfo(@TypeOf(root_module));
+    const ref_name = if (ti == .enum_literal)
+        @tagName(root_module)
+    else if (ti == .pointer)
+        @as([]const u8, root_module)
+    else
+        return; // struct = inline module, nothing to cross-reference
+
+    if (!hasModule(manifest, ref_name)) {
+        @compileError(section ++ " '" ++ name ++ "': root_module references unknown module '" ++ ref_name ++ "'");
     }
-    inline for (zig_manifest_fields) |f| {
-        if (std.mem.eql(u8, name, f)) return true;
+}
+
+fn validateDependsOn(comptime manifest: anytype, comptime deps: anytype, comptime section: []const u8, comptime name: []const u8) void {
+    inline for (@typeInfo(@TypeOf(deps)).@"struct".fields) |field| {
+        const dep_name = toComptimeString(@field(deps, field.name));
+        if (!hasArtifact(manifest, dep_name)) {
+            @compileError(section ++ " '" ++ name ++ "': depends_on references unknown artifact '" ++ dep_name ++ "'");
+        }
+    }
+}
+
+fn validateImports(comptime manifest: anytype, comptime imports: anytype, comptime section: []const u8, comptime name: []const u8) void {
+    inline for (@typeInfo(@TypeOf(imports)).@"struct".fields) |field| {
+        const import_name = toComptimeString(@field(imports, field.name));
+        if (!isImportable(manifest, import_name)) {
+            @compileError(section ++ " '" ++ name ++ "': import references unknown target '" ++ import_name ++ "'");
+        }
+    }
+}
+
+fn hasModule(comptime manifest: anytype, comptime name: []const u8) bool {
+    if (@hasField(@TypeOf(manifest), "modules")) {
+        if (@hasField(@TypeOf(manifest.modules), name)) return true;
     }
     return false;
+}
+
+fn hasArtifact(comptime manifest: anytype, comptime name: []const u8) bool {
+    inline for (.{ "executables", "libraries", "objects" }) |section| {
+        if (@hasField(@TypeOf(manifest), section)) {
+            if (@hasField(@TypeOf(@field(manifest, section)), name)) return true;
+        }
+    }
+    return false;
+}
+
+fn isImportable(comptime manifest: anytype, comptime name: []const u8) bool {
+    if (hasModule(manifest, name)) return true;
+    if (@hasField(@TypeOf(manifest), "options_modules")) {
+        if (@hasField(@TypeOf(manifest.options_modules), name)) return true;
+    }
+    if (@hasField(@TypeOf(manifest), "dependencies")) {
+        const base = comptimeBaseName(name);
+        if (@hasField(@TypeOf(manifest.dependencies), base)) return true;
+    }
+    return false;
+}
+
+fn comptimeBaseName(comptime name: []const u8) []const u8 {
+    for (name, 0..) |c, i| {
+        if (c == ':') return name[0..i];
+    }
+    return name;
+}
+
+fn toComptimeString(comptime val: anytype) []const u8 {
+    const ti = @typeInfo(@TypeOf(val));
+    if (ti == .enum_literal) return @tagName(val);
+    if (ti == .pointer) return val;
+    @compileError("expected string or enum literal");
 }
 
 // --- BuildRunner ---
@@ -648,13 +740,64 @@ test "isFloatType" {
     try std.testing.expect(!comptime isFloatType("bool"));
 }
 
-test "isKnownField" {
-    try std.testing.expect(comptime isKnownField("modules"));
-    try std.testing.expect(comptime isKnownField("executables"));
-    try std.testing.expect(comptime isKnownField("name"));
-    try std.testing.expect(comptime isKnownField("dependencies"));
-    try std.testing.expect(!comptime isKnownField("bogus"));
-    try std.testing.expect(!comptime isKnownField(""));
+test "hasModule" {
+    const manifest = .{
+        .modules = .{
+            .core = .{ .root_source_file = "src/core.zig" },
+            .utils = .{ .root_source_file = "src/utils.zig" },
+        },
+    };
+    try std.testing.expect(comptime hasModule(manifest, "core"));
+    try std.testing.expect(comptime hasModule(manifest, "utils"));
+    try std.testing.expect(!comptime hasModule(manifest, "missing"));
+    // No modules section at all
+    try std.testing.expect(!comptime hasModule(.{}, "anything"));
+}
+
+test "hasArtifact" {
+    const manifest = .{
+        .executables = .{ .myapp = .{ .root_module = .{ .root_source_file = "src/main.zig" } } },
+        .libraries = .{ .mylib = .{ .root_module = .{ .root_source_file = "src/lib.zig" } } },
+    };
+    try std.testing.expect(comptime hasArtifact(manifest, "myapp"));
+    try std.testing.expect(comptime hasArtifact(manifest, "mylib"));
+    try std.testing.expect(!comptime hasArtifact(manifest, "missing"));
+}
+
+test "isImportable" {
+    const manifest = .{
+        .modules = .{
+            .core = .{ .root_source_file = "src/core.zig" },
+        },
+        .options_modules = .{
+            .config = .{ .some_flag = .{ .type = "bool" } },
+        },
+        .dependencies = .{
+            .zlib = .{},
+        },
+    };
+    // Module is importable
+    try std.testing.expect(comptime isImportable(manifest, "core"));
+    // Options module is importable
+    try std.testing.expect(comptime isImportable(manifest, "config"));
+    // Dependency is importable (plain name)
+    try std.testing.expect(comptime isImportable(manifest, "zlib"));
+    // Dependency sub-module is importable (colon-separated)
+    try std.testing.expect(comptime isImportable(manifest, "zlib:zlib"));
+    // Unknown is not importable
+    try std.testing.expect(!comptime isImportable(manifest, "missing"));
+}
+
+test "comptimeBaseName" {
+    try std.testing.expectEqualStrings("zlib", comptime comptimeBaseName("zlib"));
+    try std.testing.expectEqualStrings("zlib", comptime comptimeBaseName("zlib:zlib"));
+    try std.testing.expectEqualStrings("foo", comptime comptimeBaseName("foo:bar:baz"));
+    try std.testing.expectEqualStrings("", comptime comptimeBaseName(""));
+}
+
+test "toComptimeString" {
+    try std.testing.expectEqualStrings("hello", comptime toComptimeString("hello"));
+    try std.testing.expectEqualStrings("world", comptime toComptimeString(.world));
 }
 
 test "validateManifest accepts minimal manifest" {
@@ -667,16 +810,40 @@ test "validateManifest accepts minimal manifest" {
     });
 }
 
-test "validateManifest accepts zbuild fields" {
+test "validateManifest accepts valid cross-references" {
     comptime validateManifest(.{
         .name = .myproject,
         .version = "0.1.0",
         .fingerprint = 0x1234,
         .minimum_zig_version = "0.14.0",
         .paths = .{"."},
-        .modules = .{},
-        .executables = .{},
-        .tests = .{},
-        .dependencies = .{},
+        .modules = .{
+            .core = .{ .root_source_file = "src/core.zig" },
+        },
+        .executables = .{
+            .myapp = .{
+                .root_module = .core,
+            },
+        },
+        .libraries = .{
+            .mylib = .{
+                .root_module = .{
+                    .root_source_file = "src/lib.zig",
+                    .imports = .{.core},
+                },
+            },
+        },
+    });
+}
+
+test "validateManifest accepts unknown top-level fields" {
+    // Forward compatibility: unknown fields should NOT cause errors
+    comptime validateManifest(.{
+        .name = .myproject,
+        .version = "0.1.0",
+        .fingerprint = 0x1234,
+        .minimum_zig_version = "0.14.0",
+        .paths = .{"."},
+        .some_future_zig_field = "should be ignored",
     });
 }
