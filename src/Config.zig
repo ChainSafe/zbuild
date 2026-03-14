@@ -1164,3 +1164,422 @@ fn Serializer(Writer: type) type {
         }
     };
 }
+
+// -- Tests --
+
+fn testParse(source: [:0]const u8) !Config {
+    const gpa = std.testing.allocator;
+
+    var ast = try std.zig.Ast.parse(gpa, source, .zon);
+    defer ast.deinit(gpa);
+
+    var zoir = try std.zig.ZonGen.generate(gpa, ast, .{});
+    defer zoir.deinit(gpa);
+
+    if (zoir.hasCompileErrors()) return error.ParseZoir;
+
+    return parseFromZoir(gpa, "<test>", zoir, ast, null);
+}
+
+fn testParseFail(source: [:0]const u8) !void {
+    const gpa = std.testing.allocator;
+
+    var ast = try std.zig.Ast.parse(gpa, source, .zon);
+    defer ast.deinit(gpa);
+
+    var zoir = try std.zig.ZonGen.generate(gpa, ast, .{});
+    defer zoir.deinit(gpa);
+
+    if (zoir.hasCompileErrors()) return; // expected failure
+
+    _ = parseFromZoir(gpa, "<test>", zoir, ast, null) catch return;
+    return error.ExpectedParseFailure;
+}
+
+test "parse minimal config" {
+    const config = try testParse(
+        \\.{
+        \\    .name = .basic,
+        \\    .version = "0.1.0",
+        \\    .fingerprint = 0x90797553773ca567,
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\}
+    );
+    try std.testing.expectEqualStrings("basic", config.name);
+    try std.testing.expectEqualStrings("0.1.0", config.version);
+    try std.testing.expectEqual(@as(u64, 0x90797553773ca567), config.fingerprint);
+    try std.testing.expectEqualStrings("0.14.0", config.minimum_zig_version);
+    try std.testing.expectEqual(@as(usize, 1), config.paths.len);
+    try std.testing.expectEqualStrings("src", config.paths[0]);
+
+    // Optional fields should be null
+    try std.testing.expect(config.description == null);
+    try std.testing.expect(config.modules == null);
+    try std.testing.expect(config.executables == null);
+    try std.testing.expect(config.dependencies == null);
+}
+
+test "parse config with module" {
+    const config = try testParse(
+        \\.{
+        \\    .name = .mylib,
+        \\    .version = "1.0.0",
+        \\    .fingerprint = 0x1234567890abcdef,
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\    .modules = .{
+        \\        .core = .{
+        \\            .root_source_file = "src/core.zig",
+        \\            .link_libc = true,
+        \\            .optimize = .ReleaseFast,
+        \\        },
+        \\    },
+        \\}
+    );
+
+    const modules = config.modules orelse return error.ExpectedModules;
+    try std.testing.expectEqual(@as(usize, 1), modules.count());
+    const core = modules.get("core") orelse return error.ExpectedCoreModule;
+    try std.testing.expectEqualStrings("src/core.zig", core.root_source_file.?);
+    try std.testing.expectEqual(true, core.link_libc.?);
+    try std.testing.expectEqual(std.builtin.OptimizeMode.ReleaseFast, core.optimize.?);
+    try std.testing.expect(core.strip == null);
+    try std.testing.expect(core.target == null);
+}
+
+test "parse config with executable and inline module" {
+    const config = try testParse(
+        \\.{
+        \\    .name = .myapp,
+        \\    .version = "0.2.0",
+        \\    .fingerprint = 0xabcdef1234567890,
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\    .executables = .{
+        \\        .main = .{
+        \\            .root_module = .{
+        \\                .root_source_file = "src/main.zig",
+        \\            },
+        \\        },
+        \\    },
+        \\}
+    );
+
+    const exes = config.executables orelse return error.ExpectedExecutables;
+    try std.testing.expectEqual(@as(usize, 1), exes.count());
+    const main_exe = exes.get("main") orelse return error.ExpectedMainExe;
+    try std.testing.expectEqual(ModuleLink.module, std.meta.activeTag(main_exe.root_module));
+    try std.testing.expectEqualStrings("src/main.zig", main_exe.root_module.module.root_source_file.?);
+}
+
+test "parse config with executable referencing named module" {
+    const config = try testParse(
+        \\.{
+        \\    .name = .myapp,
+        \\    .version = "0.2.0",
+        \\    .fingerprint = 0xabcdef1234567890,
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\    .executables = .{
+        \\        .main = .{
+        \\            .root_module = .core,
+        \\        },
+        \\    },
+        \\}
+    );
+
+    const exes = config.executables orelse return error.ExpectedExecutables;
+    const main_exe = exes.get("main") orelse return error.ExpectedMainExe;
+    try std.testing.expectEqual(ModuleLink.name, std.meta.activeTag(main_exe.root_module));
+    try std.testing.expectEqualStrings("core", main_exe.root_module.name);
+}
+
+test "parse config with dependency" {
+    const config = try testParse(
+        \\.{
+        \\    .name = .myapp,
+        \\    .version = "0.1.0",
+        \\    .fingerprint = 0x1111111111111111,
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\    .dependencies = .{
+        \\        .zlib = .{
+        \\            .url = "https://example.com/zlib.tar.gz",
+        \\            .hash = "abc123",
+        \\            .lazy = true,
+        \\        },
+        \\        .local_dep = .{
+        \\            .path = "../other",
+        \\        },
+        \\    },
+        \\}
+    );
+
+    const deps = config.dependencies orelse return error.ExpectedDependencies;
+    try std.testing.expectEqual(@as(usize, 2), deps.count());
+
+    const zlib = deps.get("zlib") orelse return error.ExpectedZlib;
+    try std.testing.expect(zlib.typ == .url);
+    try std.testing.expectEqualStrings("https://example.com/zlib.tar.gz", zlib.value);
+    try std.testing.expectEqualStrings("abc123", zlib.hash.?);
+    try std.testing.expectEqual(true, zlib.lazy.?);
+
+    const local = deps.get("local_dep") orelse return error.ExpectedLocalDep;
+    try std.testing.expect(local.typ == .path);
+    try std.testing.expectEqualStrings("../other", local.value);
+    try std.testing.expect(local.hash == null);
+    try std.testing.expect(local.lazy == null);
+}
+
+test "parse config with library" {
+    const config = try testParse(
+        \\.{
+        \\    .name = .mylib,
+        \\    .version = "1.0.0",
+        \\    .fingerprint = 0x2222222222222222,
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\    .libraries = .{
+        \\        .mylib = .{
+        \\            .root_module = .{
+        \\                .root_source_file = "src/lib.zig",
+        \\            },
+        \\            .version = "2.0.0",
+        \\            .linkage = .dynamic,
+        \\        },
+        \\    },
+        \\}
+    );
+
+    const libs = config.libraries orelse return error.ExpectedLibraries;
+    const lib = libs.get("mylib") orelse return error.ExpectedMylib;
+    try std.testing.expectEqualStrings("2.0.0", lib.version.?);
+    try std.testing.expectEqual(std.builtin.LinkMode.dynamic, lib.linkage.?);
+}
+
+test "parse config with test section" {
+    const config = try testParse(
+        \\.{
+        \\    .name = .mylib,
+        \\    .version = "1.0.0",
+        \\    .fingerprint = 0x3333333333333333,
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\    .tests = .{
+        \\        .unit = .{
+        \\            .root_module = .{
+        \\                .root_source_file = "src/test.zig",
+        \\            },
+        \\            .filters = .{"specific_test"},
+        \\        },
+        \\    },
+        \\}
+    );
+
+    const tests = config.tests orelse return error.ExpectedTests;
+    const unit = tests.get("unit") orelse return error.ExpectedUnit;
+    try std.testing.expectEqual(@as(usize, 1), unit.filters.len);
+    try std.testing.expectEqualStrings("specific_test", unit.filters[0]);
+}
+
+test "parse config with runs" {
+    const config = try testParse(
+        \\.{
+        \\    .name = .myapp,
+        \\    .version = "1.0.0",
+        \\    .fingerprint = 0x4444444444444444,
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\    .runs = .{
+        \\        .docs = "echo 'hello'",
+        \\    },
+        \\}
+    );
+
+    const runs = config.runs orelse return error.ExpectedRuns;
+    const docs = runs.get("docs") orelse return error.ExpectedDocs;
+    try std.testing.expectEqualStrings("echo 'hello'", docs.*);
+}
+
+test "parse config with options" {
+    const config = try testParse(
+        \\.{
+        \\    .name = .myapp,
+        \\    .version = "1.0.0",
+        \\    .fingerprint = 0x5555555555555555,
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\    .options = .{
+        \\        .verbose = .{
+        \\            .type = "bool",
+        \\            .default = false,
+        \\            .description = "Enable verbose output",
+        \\        },
+        \\        .threads = .{
+        \\            .type = "usize",
+        \\            .default = 4,
+        \\        },
+        \\    },
+        \\}
+    );
+
+    const opts = config.options orelse return error.ExpectedOptions;
+    try std.testing.expectEqual(@as(usize, 2), opts.count());
+
+    const verbose = opts.get("verbose") orelse return error.ExpectedVerbose;
+    try std.testing.expect(verbose == .bool);
+    try std.testing.expectEqual(false, verbose.bool.default.?);
+
+    const threads = opts.get("threads") orelse return error.ExpectedThreads;
+    try std.testing.expect(threads == .int);
+    try std.testing.expectEqual(@as(i64, 4), threads.int.default.?);
+}
+
+test "parse config with options_modules" {
+    const config = try testParse(
+        \\.{
+        \\    .name = .myapp,
+        \\    .version = "1.0.0",
+        \\    .fingerprint = 0x6666666666666666,
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\    .options_modules = .{
+        \\        .build_options = .{
+        \\            .debug_mode = .{
+        \\                .type = "bool",
+        \\                .default = false,
+        \\            },
+        \\        },
+        \\    },
+        \\}
+    );
+
+    const opt_modules = config.options_modules orelse return error.ExpectedOptionsModules;
+    try std.testing.expectEqual(@as(usize, 1), opt_modules.count());
+    const build_opts = opt_modules.get("build_options") orelse return error.ExpectedBuildOptions;
+    try std.testing.expectEqual(@as(usize, 1), build_opts.count());
+}
+
+test "parse config with module imports" {
+    const config = try testParse(
+        \\.{
+        \\    .name = .myapp,
+        \\    .version = "1.0.0",
+        \\    .fingerprint = 0x7777777777777777,
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\    .modules = .{
+        \\        .core = .{
+        \\            .root_source_file = "src/core.zig",
+        \\            .imports = .{ .utils, "other_dep" },
+        \\        },
+        \\    },
+        \\}
+    );
+
+    const modules = config.modules orelse return error.ExpectedModules;
+    const core = modules.get("core") orelse return error.ExpectedCore;
+    const imports = core.imports orelse return error.ExpectedImports;
+    try std.testing.expectEqual(@as(usize, 2), imports.len);
+    try std.testing.expectEqualStrings("utils", imports[0]);
+    try std.testing.expectEqualStrings("other_dep", imports[1]);
+}
+
+test "parse fails on missing required field" {
+    try testParseFail(
+        \\.{
+        \\    .name = .basic,
+        \\    .version = "0.1.0",
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\}
+    );
+}
+
+test "parse fails on invalid version string" {
+    try testParseFail(
+        \\.{
+        \\    .name = .basic,
+        \\    .version = "not_a_version",
+        \\    .fingerprint = 0x1234567890abcdef,
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\}
+    );
+}
+
+test "parse config with description and keywords" {
+    const config = try testParse(
+        \\.{
+        \\    .name = .myapp,
+        \\    .version = "1.0.0",
+        \\    .fingerprint = 0x8888888888888888,
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\    .description = "A test application",
+        \\    .keywords = .{ "test", "app" },
+        \\}
+    );
+
+    try std.testing.expectEqualStrings("A test application", config.description.?);
+    const keywords = config.keywords.?;
+    try std.testing.expectEqual(@as(usize, 2), keywords.len);
+    try std.testing.expectEqualStrings("test", keywords[0]);
+    try std.testing.expectEqualStrings("app", keywords[1]);
+}
+
+test "parse config with dependency args" {
+    const config = try testParse(
+        \\.{
+        \\    .name = .myapp,
+        \\    .version = "1.0.0",
+        \\    .fingerprint = 0x9999999999999999,
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\    .dependencies = .{
+        \\        .dep = .{
+        \\            .path = "../dep",
+        \\            .args = .{
+        \\                .enable_feature = true,
+        \\                .count = 42,
+        \\                .name = "hello",
+        \\            },
+        \\        },
+        \\    },
+        \\}
+    );
+
+    const deps = config.dependencies orelse return error.ExpectedDeps;
+    const dep = deps.get("dep") orelse return error.ExpectedDep;
+    const args = dep.args orelse return error.ExpectedArgs;
+    try std.testing.expectEqual(@as(usize, 3), args.count());
+
+    const enable = args.get("enable_feature") orelse return error.ExpectedArg;
+    try std.testing.expect(enable == .bool);
+    try std.testing.expectEqual(true, enable.bool);
+}
+
+test "parse config with fmts" {
+    const config = try testParse(
+        \\.{
+        \\    .name = .myapp,
+        \\    .version = "1.0.0",
+        \\    .fingerprint = 0xaaaaaaaaaaaaaaaa,
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\    .fmts = .{
+        \\        .check = .{
+        \\            .paths = .{"src"},
+        \\            .check = true,
+        \\        },
+        \\    },
+        \\}
+    );
+
+    const fmts = config.fmts orelse return error.ExpectedFmts;
+    const check = fmts.get("check") orelse return error.ExpectedCheck;
+    try std.testing.expectEqual(true, check.check.?);
+    const fmt_paths = check.paths orelse return error.ExpectedPaths;
+    try std.testing.expectEqual(@as(usize, 1), fmt_paths.len);
+}
