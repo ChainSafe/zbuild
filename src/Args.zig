@@ -75,7 +75,7 @@ const test_cases = &[_]TestCase{
 test "parse" {
     const allocator = std.testing.allocator;
     for (test_cases) |tc| {
-        var args = try Args.parse(allocator, tc.input);
+        var args = try Args.initFromString(allocator, tc.input);
         defer args.deinit();
 
         const actual = args.args.items;

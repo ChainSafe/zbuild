@@ -387,7 +387,7 @@ const Parser = struct {
             } else if (std.mem.eql(u8, field_name, "dependencies")) {
                 config.dependencies = try self.parseHashMap(Dependency, parseDependency, field_value);
             } else if (std.mem.eql(u8, field_name, "write_files")) {
-                // stub — pre-existing incomplete feature
+                config.write_files = try self.parseHashMap(WriteFile, parseWriteFile, field_value);
             } else if (std.mem.eql(u8, field_name, "options")) {
                 config.options = try self.parseHashMap(Option, parseOption, field_value);
             } else if (std.mem.eql(u8, field_name, "options_modules")) {
@@ -617,6 +617,60 @@ const Parser = struct {
 
     fn parseRun(self: *Parser, index: std.zig.Zoir.Node.Index) Error!Run {
         return try self.parseString(index);
+    }
+
+    fn parseWriteFile(self: *Parser, index: std.zig.Zoir.Node.Index) Error!WriteFile {
+        const n = try self.parseStructLiteral(index);
+        var wf = WriteFile{};
+        for (n.names, 0..) |name, i| {
+            const field_name = name.get(self.zoir);
+            const field_value = n.vals.at(@intCast(i));
+            if (std.mem.eql(u8, field_name, "private")) {
+                wf.private = try self.parseT(bool, field_value);
+            } else if (std.mem.eql(u8, field_name, "items")) {
+                wf.items = try self.parseHashMap(WriteFile.Path, parseWriteFilePath, field_value);
+            }
+        }
+        return wf;
+    }
+
+    fn parseWriteFilePath(self: *Parser, index: std.zig.Zoir.Node.Index) Error!WriteFile.Path {
+        const n = try self.parseStructLiteral(index);
+        var path_str: ?[]const u8 = null;
+        var type_str: ?[]const u8 = null;
+        var exclude_extensions: ?[][]const u8 = null;
+        var include_extensions: ?[][]const u8 = null;
+        for (n.names, 0..) |name, i| {
+            const field_name = name.get(self.zoir);
+            const field_value = n.vals.at(@intCast(i));
+            if (std.mem.eql(u8, field_name, "type")) {
+                type_str = try self.parseString(field_value);
+            } else if (std.mem.eql(u8, field_name, "path")) {
+                path_str = try self.parseString(field_value);
+            } else if (std.mem.eql(u8, field_name, "exclude_extensions")) {
+                exclude_extensions = try self.parseStringOrEnumSlice(field_value);
+            } else if (std.mem.eql(u8, field_name, "include_extensions")) {
+                include_extensions = try self.parseStringOrEnumSlice(field_value);
+            }
+        }
+        const t = type_str orelse {
+            try self.returnParseError("missing required field 'type'", index.getAstNode(self.zoir));
+        };
+        const p = path_str orelse {
+            try self.returnParseError("missing required field 'path'", index.getAstNode(self.zoir));
+        };
+        if (std.mem.eql(u8, t, "file")) {
+            return .{ .file = .{ .type = t, .path = p } };
+        } else if (std.mem.eql(u8, t, "dir")) {
+            return .{ .dir = .{
+                .type = t,
+                .path = p,
+                .exclude_extensions = exclude_extensions,
+                .include_extensions = include_extensions,
+            } };
+        } else {
+            try self.returnParseErrorFmt("invalid write_file type '{s}'", .{t}, index.getAstNode(self.zoir));
+        }
     }
 
     // -- Layer 4: Custom parsers --
@@ -1975,6 +2029,71 @@ test "serialize round-trip: config with fmts" {
         \\        .check = .{
         \\            .paths = .{"src"},
         \\            .check = true,
+        \\        },
+        \\    },
+        \\}
+    );
+}
+
+test "parse config with write_files" {
+    const config = try testParse(
+        \\.{
+        \\    .name = .myapp,
+        \\    .version = "1.0.0",
+        \\    .fingerprint = 0xcccccccccccccccc,
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\    .write_files = .{
+        \\        .generated = .{
+        \\            .items = .{
+        \\                .config_h = .{
+        \\                    .type = "file",
+        \\                    .path = "config.h",
+        \\                },
+        \\                .assets = .{
+        \\                    .type = "dir",
+        \\                    .path = "assets",
+        \\                    .exclude_extensions = .{".tmp"},
+        \\                },
+        \\            },
+        \\        },
+        \\    },
+        \\}
+    );
+
+    const wf = config.write_files orelse return error.ExpectedWriteFiles;
+    const generated = wf.get("generated") orelse return error.ExpectedGenerated;
+    const items = generated.items orelse return error.ExpectedItems;
+    try std.testing.expectEqual(@as(usize, 2), items.count());
+
+    const config_h = items.get("config_h") orelse return error.ExpectedConfigH;
+    try std.testing.expect(config_h == .file);
+    try std.testing.expectEqualStrings("config.h", config_h.file.path);
+
+    const assets = items.get("assets") orelse return error.ExpectedAssets;
+    try std.testing.expect(assets == .dir);
+    try std.testing.expectEqualStrings("assets", assets.dir.path);
+    const excl = assets.dir.exclude_extensions orelse return error.ExpectedExclude;
+    try std.testing.expectEqual(@as(usize, 1), excl.len);
+    try std.testing.expectEqualStrings(".tmp", excl[0]);
+}
+
+test "serialize round-trip: config with write_files" {
+    try testSerializeRoundTrip(
+        \\.{
+        \\    .name = .myapp,
+        \\    .version = "1.0.0",
+        \\    .fingerprint = 0xcccccccccccccccc,
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\    .write_files = .{
+        \\        .generated = .{
+        \\            .items = .{
+        \\                .config_h = .{
+        \\                    .type = "file",
+        \\                    .path = "config.h",
+        \\                },
+        \\            },
         \\        },
         \\    },
         \\}

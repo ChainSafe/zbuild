@@ -72,6 +72,7 @@ pub fn parseArgs(allocator: Allocator, args: *Args) !GlobalOptions {
             GlobalArgs.zbuild_file
         else if (mem.eql(u8, arg, "--no-sync")) {
             opts.no_sync = true;
+            _ = args.next();
             continue;
         } else {
             break :iter;
@@ -110,6 +111,30 @@ pub fn parseArgs(allocator: Allocator, args: *Args) !GlobalOptions {
     }
 
     return opts;
+}
+
+test "--no-sync flag is consumed without infinite loop" {
+    const allocator = std.testing.allocator;
+    var args = try Args.initFromString(allocator, "--no-sync sync");
+    defer args.deinit();
+    const opts = try parseArgs(allocator, &args);
+    defer opts.deinit(allocator);
+
+    try std.testing.expectEqual(true, opts.no_sync);
+    // After parsing global opts, "sync" should be the next arg (the command)
+    try std.testing.expectEqualStrings("sync", args.next().?);
+}
+
+test "--no-sync flag with other global options" {
+    const allocator = std.testing.allocator;
+    var args = try Args.initFromString(allocator, "--project-dir /tmp --no-sync build");
+    defer args.deinit();
+    const opts = try parseArgs(allocator, &args);
+    defer opts.deinit(allocator);
+
+    try std.testing.expectEqual(true, opts.no_sync);
+    try std.testing.expectEqualStrings("/tmp", opts.project_dir);
+    try std.testing.expectEqualStrings("build", args.next().?);
 }
 
 pub fn getZigEnv(self: GlobalOptions) ZigEnv {

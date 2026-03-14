@@ -30,7 +30,7 @@ pub fn parse(allocator: std.mem.Allocator) !@This() {
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);
 
-    if (result.term != .Exited and result.term.Exited != 0) {
+    if (result.term != .Exited or result.term.Exited != 0) {
         return error.UnexpectedExitCode;
     }
 
