@@ -5,11 +5,10 @@
 //!     const zbuild = @import("zbuild");
 //!
 //!     pub fn build(b: *std.Build) void {
-//!         zbuild.configureBuild(b) catch |err| {
+//!         zbuild.configureBuild(b, @import("build.zig.zon")) catch |err| {
 //!             std.log.err("zbuild: {}", .{err});
 //!         };
 //!     }
 
-pub const Config = @import("Config.zig");
 pub const build_runner = @import("build_runner.zig");
 pub const configureBuild = build_runner.configureBuild;

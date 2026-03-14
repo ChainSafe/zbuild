@@ -1,21 +1,23 @@
-//! Configures a Zig build graph from a zbuild Config.
-//! Replaces string-concatenation codegen (ConfigBuildgen) with direct API calls.
+//! Configures a Zig build graph from a comptime ZON manifest.
+//!
+//! The manifest is obtained via @import("build.zig.zon") in the user's build.zig:
+//!
+//!     const zbuild = @import("zbuild");
+//!
+//!     pub fn build(b: *std.Build) void {
+//!         zbuild.configureBuild(b, @import("build.zig.zon")) catch |err| {
+//!             std.log.err("zbuild: {}", .{err});
+//!         };
+//!     }
 
 const std = @import("std");
-const Config = @import("Config.zig");
 
-pub fn configureBuild(b: *std.Build) !void {
-    const config = try Config.parseFromFile(b.allocator, "build.zig.zon", null);
-    try configureWithConfig(b, config);
-}
-
-fn configureWithConfig(b: *std.Build, config: Config) !void {
+pub fn configureBuild(b: *std.Build, comptime manifest: anytype) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
     var runner = BuildRunner{
         .b = b,
-        .config = config,
         .target = target,
         .optimize = optimize,
         .modules = std.StringHashMap(*std.Build.Module).init(b.allocator),
@@ -24,103 +26,92 @@ fn configureWithConfig(b: *std.Build, config: Config) !void {
         .install_steps = std.StringHashMap(*std.Build.Step).init(b.allocator),
     };
 
-    // Phase 1: Create options modules
-    if (config.options_modules) |options_modules| {
-        for (options_modules.keys(), options_modules.values()) |name, options| {
-            try runner.createOptionsModule(name, options);
+    // Phase 1: Resolve dependencies (comptime args forwarding)
+    if (@hasField(@TypeOf(manifest), "dependencies")) {
+        inline for (@typeInfo(@TypeOf(manifest.dependencies)).@"struct".fields) |field| {
+            const decl = @field(manifest.dependencies, field.name);
+            const dep = if (@hasField(@TypeOf(decl), "args"))
+                b.dependency(field.name, decl.args)
+            else
+                b.dependency(field.name, .{});
+            try runner.dependencies.put(field.name, dep);
         }
     }
 
-    // Phase 2: Create dependencies
-    if (config.dependencies) |dependencies| {
-        for (dependencies.keys(), dependencies.values()) |name, dep| {
-            try runner.createDependency(name, dep);
+    // Phase 2: Create options modules
+    if (@hasField(@TypeOf(manifest), "options_modules")) {
+        inline for (@typeInfo(@TypeOf(manifest.options_modules)).@"struct".fields) |field| {
+            try runner.createOptionsModule(field.name, @field(manifest.options_modules, field.name));
         }
     }
 
     // Phase 3: Create named modules
-    if (config.modules) |modules| {
-        for (modules.keys(), modules.values()) |name, module| {
-            const m = try runner.createModule(module, name);
-            if (!(module.private orelse true)) {
-                b.modules.put(b.dupe(name), m) catch @panic("OOM");
+    if (@hasField(@TypeOf(manifest), "modules")) {
+        inline for (@typeInfo(@TypeOf(manifest.modules)).@"struct".fields) |field| {
+            const mod = @field(manifest.modules, field.name);
+            const m = runner.createModule(mod, field.name);
+            if (@hasField(@TypeOf(mod), "private")) {
+                if (!mod.private) {
+                    b.modules.put(b.dupe(field.name), m) catch @panic("OOM");
+                }
             }
-            try runner.modules.put(name, m);
+            try runner.modules.put(field.name, m);
         }
     }
 
     // Phase 4: Create executables
-    if (config.executables) |executables| {
-        for (executables.keys(), executables.values()) |name, exe| {
-            try runner.createExecutable(name, exe);
+    if (@hasField(@TypeOf(manifest), "executables")) {
+        inline for (@typeInfo(@TypeOf(manifest.executables)).@"struct".fields) |field| {
+            try runner.createExecutable(field.name, @field(manifest.executables, field.name));
         }
     }
 
     // Phase 5: Create libraries
-    if (config.libraries) |libraries| {
-        for (libraries.keys(), libraries.values()) |name, lib| {
-            try runner.createLibrary(name, lib);
+    if (@hasField(@TypeOf(manifest), "libraries")) {
+        inline for (@typeInfo(@TypeOf(manifest.libraries)).@"struct".fields) |field| {
+            try runner.createLibrary(field.name, @field(manifest.libraries, field.name));
         }
     }
 
     // Phase 6: Create objects
-    if (config.objects) |objects| {
-        for (objects.keys(), objects.values()) |name, obj| {
-            try runner.createObject(name, obj);
+    if (@hasField(@TypeOf(manifest), "objects")) {
+        inline for (@typeInfo(@TypeOf(manifest.objects)).@"struct".fields) |field| {
+            try runner.createObject(field.name, @field(manifest.objects, field.name));
         }
     }
 
     // Phase 7: Create tests
-    var tls_run_test: ?*std.Build.Step = null;
-
-    if (config.modules) |modules| {
-        if (modules.count() > 0 or (config.tests != null and config.tests.?.count() > 0)) {
-            tls_run_test = b.step("test", "Run all tests");
-        }
-        for (modules.keys()) |name| {
-            if (config.tests == null or !config.tests.?.contains(name)) {
-                try runner.createTest(name, .{
-                    .root_module = .{ .name = name },
-                    .filters = &.{},
-                }, tls_run_test.?);
-            }
-        }
-    }
-
-    if (config.tests) |tests| {
-        if (tls_run_test == null) {
-            tls_run_test = b.step("test", "Run all tests");
-        }
-        for (tests.keys(), tests.values()) |name, t| {
-            try runner.createTest(name, t, tls_run_test.?);
+    if (@hasField(@TypeOf(manifest), "tests")) {
+        const tls_run_test = b.step("test", "Run all tests");
+        inline for (@typeInfo(@TypeOf(manifest.tests)).@"struct".fields) |field| {
+            try runner.createTest(field.name, @field(manifest.tests, field.name), tls_run_test);
         }
     }
 
     // Phase 8: Create fmts
-    if (config.fmts) |fmts| {
+    if (@hasField(@TypeOf(manifest), "fmts")) {
         const tls_run_fmt = b.step("fmt", "Run all fmts");
-        for (fmts.keys(), fmts.values()) |name, fmt| {
-            try runner.createFmt(name, fmt, tls_run_fmt);
+        inline for (@typeInfo(@TypeOf(manifest.fmts)).@"struct".fields) |field| {
+            runner.createFmt(field.name, @field(manifest.fmts, field.name), tls_run_fmt);
         }
     }
 
     // Phase 9: Create runs
-    if (config.runs) |runs| {
-        for (runs.keys(), runs.values()) |name, run| {
-            runner.createRun(name, run);
+    if (@hasField(@TypeOf(manifest), "runs")) {
+        inline for (@typeInfo(@TypeOf(manifest.runs)).@"struct".fields) |field| {
+            runner.createRun(field.name, @field(manifest.runs, field.name));
         }
     }
 
-    // Phase 10: Wire imports for all modules
-    try runner.wireAllImports(config);
+    // Phase 10: Wire imports
+    try runner.wireAllImports(manifest);
 
-    // Phase 11: Wire depends_on for artifacts
-    runner.wireDependsOn(config);
+    // Phase 11: Wire depends_on
+    runner.wireDependsOn(manifest);
 }
 
 const BuildRunner = struct {
     b: *std.Build,
-    config: Config,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     modules: std.StringHashMap(*std.Build.Module),
@@ -128,39 +119,41 @@ const BuildRunner = struct {
     options_modules: std.StringHashMap(*std.Build.Module),
     install_steps: std.StringHashMap(*std.Build.Step),
 
-    fn createModule(self: *BuildRunner, module: Config.Module, name: []const u8) !*std.Build.Module {
-        const m = self.b.createModule(.{
-            .root_source_file = if (module.root_source_file) |f| self.resolveLazyPath(f) else null,
-            .target = if (module.target) |t| self.resolveTarget(t) else self.target,
-            .optimize = module.optimize orelse self.optimize,
-            .link_libc = module.link_libc,
-            .link_libcpp = module.link_libcpp,
-            .single_threaded = module.single_threaded,
-            .strip = module.strip,
-            .unwind_tables = module.unwind_tables,
-            .dwarf_format = module.dwarf_format,
-            .code_model = module.code_model,
-            .error_tracing = module.error_tracing,
-            .omit_frame_pointer = module.omit_frame_pointer,
-            .pic = module.pic,
-            .red_zone = module.red_zone,
-            .sanitize_c = module.sanitize_c,
-            .sanitize_thread = module.sanitize_thread,
-            .stack_check = module.stack_check,
-            .stack_protector = module.stack_protector,
-            .fuzz = module.fuzz,
-            .valgrind = module.valgrind,
-        });
+    // --- Module creation ---
 
-        if (module.include_paths) |paths| {
-            for (paths) |path| {
-                m.addIncludePath(self.resolveLazyPath(path));
+    const module_passthrough_fields = .{
+        "link_libc",       "link_libcpp",     "single_threaded",
+        "strip",           "unwind_tables",   "dwarf_format",
+        "code_model",      "error_tracing",   "omit_frame_pointer",
+        "pic",             "red_zone",        "sanitize_c",
+        "sanitize_thread", "stack_check",     "stack_protector",
+        "fuzz",            "valgrind",
+    };
+
+    fn createModule(self: *BuildRunner, comptime mod: anytype, name: []const u8) *std.Build.Module {
+        const Mod = @TypeOf(mod);
+        var opts: std.Build.Module.CreateOptions = .{
+            .root_source_file = if (@hasField(Mod, "root_source_file")) self.resolveLazyPath(mod.root_source_file) else null,
+            .target = if (@hasField(Mod, "target")) self.resolveTarget(mod.target) else self.target,
+            .optimize = if (@hasField(Mod, "optimize")) mod.optimize else self.optimize,
+        };
+        inline for (module_passthrough_fields) |fname| {
+            if (@hasField(Mod, fname)) {
+                @field(opts, fname) = @field(mod, fname);
+            }
+        }
+        const m = self.b.createModule(opts);
+
+        if (@hasField(Mod, "include_paths")) {
+            inline for (@typeInfo(@TypeOf(mod.include_paths)).@"struct".fields) |field| {
+                m.addIncludePath(self.resolveLazyPath(@field(mod.include_paths, field.name)));
             }
         }
 
-        if (module.link_libraries) |libs| {
-            for (libs) |lib| {
-                var parts = std.mem.splitScalar(u8, lib, ':');
+        if (@hasField(Mod, "link_libraries")) {
+            inline for (@typeInfo(@TypeOf(mod.link_libraries)).@"struct".fields) |field| {
+                const lib_spec: []const u8 = @field(mod.link_libraries, field.name);
+                var parts = std.mem.splitScalar(u8, lib_spec, ':');
                 const dep_name = parts.first();
                 const artifact_name = if (parts.next()) |rest| rest else dep_name;
                 if (self.dependencies.get(dep_name)) |dep| {
@@ -169,102 +162,58 @@ const BuildRunner = struct {
             }
         }
 
-        try self.modules.put(name, m);
+        self.modules.put(name, m) catch @panic("OOM");
         return m;
     }
 
-    fn resolveModuleLink(self: *BuildRunner, link: Config.ModuleLink, fallback_name: []const u8) !*std.Build.Module {
-        switch (link) {
-            .name => |n| {
-                return self.modules.get(n) orelse {
-                    std.log.err("zbuild: module '{s}' not found", .{n});
-                    return error.ModuleNotFound;
-                };
-            },
-            .module => |m| {
-                const name = m.name orelse fallback_name;
-                return try self.createModule(m, name);
-            },
+    fn resolveModuleLink(self: *BuildRunner, comptime link: anytype, name: []const u8) !*std.Build.Module {
+        const ti = @typeInfo(@TypeOf(link));
+        if (ti == .enum_literal) {
+            const mod_name = @tagName(link);
+            return self.modules.get(mod_name) orelse {
+                std.log.err("zbuild: module '{s}' not found", .{mod_name});
+                return error.ModuleNotFound;
+            };
+        } else if (ti == .pointer) {
+            const str: []const u8 = link;
+            return self.modules.get(str) orelse {
+                std.log.err("zbuild: module '{s}' not found", .{str});
+                return error.ModuleNotFound;
+            };
+        } else if (ti == .@"struct") {
+            const mod_name: []const u8 = if (@hasField(@TypeOf(link), "name")) link.name else name;
+            return self.createModule(link, mod_name);
+        } else {
+            @compileError("root_module must be a string, enum literal, or struct");
         }
     }
 
-    fn createDependency(self: *BuildRunner, name: []const u8, dep: Config.Dependency) !void {
-        _ = dep;
-        const d = self.b.dependency(name, .{});
-        try self.dependencies.put(name, d);
-    }
+    // --- Artifact creation ---
 
-    fn createOptionsModule(self: *BuildRunner, name: []const u8, options: Config.OptionsModule) !void {
-        const opts = self.b.addOptions();
-        for (options.keys(), options.values()) |opt_name, opt_value| {
-            self.addOption(opts, opt_name, opt_value);
-        }
-        const m = opts.createModule();
-        try self.options_modules.put(name, m);
-    }
+    const artifact_passthrough_fields = .{ "max_rss", "use_llvm", "use_lld" };
 
-    fn addOption(self: *BuildRunner, opts: *std.Build.Step.Options, name: []const u8, value: Config.Option) void {
-        _ = self;
-        switch (value) {
-            .bool => |v| {
-                const val = opts.step.owner.option(bool, name, v.description orelse "");
-                opts.addOption(bool, name, val orelse v.default orelse false);
-            },
-            .int => |v| {
-                const val = opts.step.owner.option(i64, name, v.description orelse "");
-                opts.addOption(i64, name, val orelse v.default orelse 0);
-            },
-            .float => |v| {
-                const val = opts.step.owner.option(f64, name, v.description orelse "");
-                opts.addOption(f64, name, val orelse v.default orelse 0.0);
-            },
-            .string => |v| {
-                const val = opts.step.owner.option([]const u8, name, v.description orelse "");
-                if (val orelse v.default) |s| {
-                    opts.addOption([]const u8, name, s);
-                }
-            },
-            .list => |v| {
-                const val = opts.step.owner.option([]const []const u8, name, v.description orelse "");
-                if (val orelse v.default) |l| {
-                    opts.addOption([]const []const u8, name, l);
-                }
-            },
-            .@"enum" => |v| {
-                const val = opts.step.owner.option([]const u8, name, v.description orelse "");
-                if (val orelse v.default) |e| {
-                    opts.addOption([]const u8, name, e);
-                }
-            },
-            .enum_list => |v| {
-                const val = opts.step.owner.option([]const []const u8, name, v.description orelse "");
-                if (val orelse v.default) |e| {
-                    opts.addOption([]const []const u8, name, e);
-                }
-            },
-            .build_id => {},
-            .lazy_path => {},
-            .lazy_path_list => {},
-        }
-    }
-
-    fn createExecutable(self: *BuildRunner, name: []const u8, exe: Config.Executable) !void {
+    fn createExecutable(self: *BuildRunner, comptime name: []const u8, comptime exe: anytype) !void {
+        const Exe = @TypeOf(exe);
         const root_module = try self.resolveModuleLink(exe.root_module, name);
 
-        const artifact = self.b.addExecutable(.{
+        var add_opts: std.Build.ExecutableOptions = .{
             .name = name,
-            .version = if (exe.version) |v| std.SemanticVersion.parse(v) catch null else null,
             .root_module = root_module,
-            .linkage = exe.linkage,
-            .max_rss = exe.max_rss,
-            .use_llvm = exe.use_llvm,
-            .use_lld = exe.use_lld,
-            .zig_lib_dir = if (exe.zig_lib_dir) |d| self.resolveLazyPath(d) else null,
-            .win32_manifest = if (exe.win32_manifest) |d| self.resolveLazyPath(d) else null,
-        });
+            .version = if (@hasField(Exe, "version")) std.SemanticVersion.parse(exe.version) catch null else null,
+        };
+        inline for (artifact_passthrough_fields) |fname| {
+            if (@hasField(Exe, fname)) {
+                @field(add_opts, fname) = @field(exe, fname);
+            }
+        }
+        if (@hasField(Exe, "linkage")) add_opts.linkage = exe.linkage;
+        if (@hasField(Exe, "zig_lib_dir")) add_opts.zig_lib_dir = self.resolveLazyPath(exe.zig_lib_dir);
+        if (@hasField(Exe, "win32_manifest")) add_opts.win32_manifest = self.resolveLazyPath(exe.win32_manifest);
+
+        const artifact = self.b.addExecutable(add_opts);
 
         const install = self.b.addInstallArtifact(artifact, .{
-            .dest_sub_path = if (exe.dest_sub_path) |p| @ptrCast(p) else null,
+            .dest_sub_path = if (@hasField(Exe, "dest_sub_path")) @ptrCast(exe.dest_sub_path) else null,
         });
 
         const tls_install = self.b.step(
@@ -284,27 +233,32 @@ const BuildRunner = struct {
         tls_run.dependOn(&run.step);
     }
 
-    fn createLibrary(self: *BuildRunner, name: []const u8, lib: Config.Library) !void {
+    fn createLibrary(self: *BuildRunner, comptime name: []const u8, comptime lib: anytype) !void {
+        const Lib = @TypeOf(lib);
         const root_module = try self.resolveModuleLink(lib.root_module, name);
 
-        const artifact = self.b.addLibrary(.{
+        var add_opts: std.Build.StaticLibraryOptions = .{
             .name = name,
-            .version = if (lib.version) |v| std.SemanticVersion.parse(v) catch null else null,
             .root_module = root_module,
-            .linkage = lib.linkage,
-            .max_rss = lib.max_rss,
-            .use_llvm = lib.use_llvm,
-            .use_lld = lib.use_lld,
-            .zig_lib_dir = if (lib.zig_lib_dir) |d| self.resolveLazyPath(d) else null,
-            .win32_manifest = if (lib.win32_manifest) |d| self.resolveLazyPath(d) else null,
-        });
+            .version = if (@hasField(Lib, "version")) std.SemanticVersion.parse(lib.version) catch null else null,
+        };
+        inline for (artifact_passthrough_fields) |fname| {
+            if (@hasField(Lib, fname)) {
+                @field(add_opts, fname) = @field(lib, fname);
+            }
+        }
+        if (@hasField(Lib, "linkage")) add_opts.linkage = lib.linkage;
+        if (@hasField(Lib, "zig_lib_dir")) add_opts.zig_lib_dir = self.resolveLazyPath(lib.zig_lib_dir);
+        if (@hasField(Lib, "win32_manifest")) add_opts.win32_manifest = self.resolveLazyPath(lib.win32_manifest);
 
-        if (lib.linker_allow_shlib_undefined) |v| {
-            artifact.linker_allow_shlib_undefined = v;
+        const artifact = self.b.addLibrary(add_opts);
+
+        if (@hasField(Lib, "linker_allow_shlib_undefined")) {
+            artifact.linker_allow_shlib_undefined = lib.linker_allow_shlib_undefined;
         }
 
         const install = self.b.addInstallArtifact(artifact, .{
-            .dest_sub_path = if (lib.dest_sub_path) |p| @ptrCast(p) else null,
+            .dest_sub_path = if (@hasField(Lib, "dest_sub_path")) @ptrCast(lib.dest_sub_path) else null,
         });
 
         const tls_install = self.b.step(
@@ -316,17 +270,22 @@ const BuildRunner = struct {
         try self.install_steps.put(name, &install.step);
     }
 
-    fn createObject(self: *BuildRunner, name: []const u8, obj: Config.Object) !void {
+    fn createObject(self: *BuildRunner, comptime name: []const u8, comptime obj: anytype) !void {
+        const Obj = @TypeOf(obj);
         const root_module = try self.resolveModuleLink(obj.root_module, name);
 
-        const artifact = self.b.addObject(.{
+        var add_opts: std.Build.ObjectOptions = .{
             .name = name,
             .root_module = root_module,
-            .max_rss = obj.max_rss,
-            .use_llvm = obj.use_llvm,
-            .use_lld = obj.use_lld,
-            .zig_lib_dir = if (obj.zig_lib_dir) |d| self.resolveLazyPath(d) else null,
-        });
+        };
+        inline for (artifact_passthrough_fields) |fname| {
+            if (@hasField(Obj, fname)) {
+                @field(add_opts, fname) = @field(obj, fname);
+            }
+        }
+        if (@hasField(Obj, "zig_lib_dir")) add_opts.zig_lib_dir = self.resolveLazyPath(obj.zig_lib_dir);
+
+        const artifact = self.b.addObject(add_opts);
 
         const install = self.b.addInstallArtifact(artifact, .{});
         const tls_install = self.b.step(
@@ -338,7 +297,8 @@ const BuildRunner = struct {
         try self.install_steps.put(name, &install.step);
     }
 
-    fn createTest(self: *BuildRunner, name: []const u8, t: Config.Test, tls_run_test: *std.Build.Step) !void {
+    fn createTest(self: *BuildRunner, comptime name: []const u8, comptime t: anytype, tls_run_test: *std.Build.Step) !void {
+        const T = @TypeOf(t);
         const root_module = try self.resolveModuleLink(t.root_module, name);
 
         const filters_option = self.b.option(
@@ -347,15 +307,19 @@ const BuildRunner = struct {
             self.b.fmt("{s} test filters", .{name}),
         );
 
-        const artifact = self.b.addTest(.{
+        var add_opts: std.Build.TestOptions = .{
             .name = name,
             .root_module = root_module,
-            .max_rss = t.max_rss,
-            .use_llvm = t.use_llvm,
-            .use_lld = t.use_lld,
-            .zig_lib_dir = if (t.zig_lib_dir) |d| self.resolveLazyPath(d) else null,
-            .filters = filters_option orelse if (t.filters.len > 0) t.filters else &.{},
-        });
+            .filters = filters_option orelse if (@hasField(T, "filters")) comptime toStringSlice(t.filters) else &.{},
+        };
+        inline for (artifact_passthrough_fields) |fname| {
+            if (@hasField(T, fname)) {
+                @field(add_opts, fname) = @field(t, fname);
+            }
+        }
+        if (@hasField(T, "zig_lib_dir")) add_opts.zig_lib_dir = self.resolveLazyPath(t.zig_lib_dir);
+
+        const artifact = self.b.addTest(add_opts);
 
         const install = self.b.addInstallArtifact(artifact, .{});
         const tls_install = self.b.step(
@@ -373,11 +337,12 @@ const BuildRunner = struct {
         tls_run_test.dependOn(&run.step);
     }
 
-    fn createFmt(self: *BuildRunner, name: []const u8, fmt: Config.Fmt, tls_run_fmt: *std.Build.Step) !void {
+    fn createFmt(self: *BuildRunner, comptime name: []const u8, comptime fmt: anytype, tls_run_fmt: *std.Build.Step) void {
+        const Fmt = @TypeOf(fmt);
         const step = self.b.addFmt(.{
-            .paths = fmt.paths orelse &.{},
-            .exclude_paths = fmt.exclude_paths orelse &.{},
-            .check = fmt.check orelse false,
+            .paths = if (@hasField(Fmt, "paths")) comptime toStringSlice(fmt.paths) else &.{},
+            .exclude_paths = if (@hasField(Fmt, "exclude_paths")) comptime toStringSlice(fmt.exclude_paths) else &.{},
+            .check = if (@hasField(Fmt, "check")) fmt.check else false,
         });
 
         const tls = self.b.step(
@@ -388,9 +353,10 @@ const BuildRunner = struct {
         tls_run_fmt.dependOn(&step.step);
     }
 
-    fn createRun(self: *BuildRunner, name: []const u8, cmd: Config.Run) void {
+    fn createRun(self: *BuildRunner, comptime name: []const u8, comptime cmd: anytype) void {
+        const cmd_str: []const u8 = cmd;
         var args = std.ArrayList([]const u8).init(self.b.allocator);
-        var it = std.mem.splitScalar(u8, cmd, ' ');
+        var it = std.mem.splitScalar(u8, cmd_str, ' ');
         while (it.next()) |arg| {
             if (arg.len > 0) args.append(arg) catch @panic("OOM");
         }
@@ -403,71 +369,130 @@ const BuildRunner = struct {
         tls.dependOn(&run.step);
     }
 
-    fn wireAllImports(self: *BuildRunner, config: Config) !void {
-        if (config.modules) |modules| {
-            for (modules.keys(), modules.values()) |name, module| {
-                if (module.imports) |imports| {
-                    const m = self.modules.get(name) orelse continue;
-                    self.wireImports(m, imports);
-                }
-            }
+    // --- Options modules ---
+
+    fn createOptionsModule(self: *BuildRunner, comptime name: []const u8, comptime options: anytype) !void {
+        const opts = self.b.addOptions();
+        inline for (@typeInfo(@TypeOf(options)).@"struct".fields) |field| {
+            self.addOption(opts, field.name, @field(options, field.name));
         }
-        // Wire imports for inline modules in executables/libraries/objects/tests
-        inline for (.{ config.executables, config.libraries, config.objects }) |maybe_map| {
-            if (maybe_map) |map| {
-                for (map.values()) |item| {
-                    if (item.root_module == .module) {
-                        if (item.root_module.module.imports) |imports| {
-                            const name = item.root_module.module.name orelse continue;
-                            const m = self.modules.get(name) orelse continue;
-                            self.wireImports(m, imports);
-                        }
+        const m = opts.createModule();
+        try self.options_modules.put(name, m);
+    }
+
+    fn addOption(self: *BuildRunner, opts: *std.Build.Step.Options, comptime name: []const u8, comptime opt: anytype) void {
+        _ = self;
+        const Opt = @TypeOf(opt);
+        const desc: []const u8 = if (@hasField(Opt, "description")) opt.description else "";
+        const type_str = opt.type;
+
+        if (comptime std.mem.eql(u8, type_str, "bool")) {
+            const default: bool = if (@hasField(Opt, "default")) opt.default else false;
+            const val = opts.step.owner.option(bool, name, desc);
+            opts.addOption(bool, name, val orelse default);
+        } else if (comptime std.mem.eql(u8, type_str, "string")) {
+            const val = opts.step.owner.option([]const u8, name, desc);
+            if (val orelse if (@hasField(Opt, "default")) @as(?[]const u8, opt.default) else null) |s| {
+                opts.addOption([]const u8, name, s);
+            }
+        } else if (comptime std.mem.eql(u8, type_str, "list")) {
+            const val = opts.step.owner.option([]const []const u8, name, desc);
+            if (val orelse if (@hasField(Opt, "default")) @as(?[]const []const u8, comptime toStringSlice(opt.default)) else null) |l| {
+                opts.addOption([]const []const u8, name, l);
+            }
+        } else if (comptime std.mem.eql(u8, type_str, "enum")) {
+            const val = opts.step.owner.option([]const u8, name, desc);
+            if (val orelse if (@hasField(Opt, "default")) @as(?[]const u8, @tagName(opt.default)) else null) |e| {
+                opts.addOption([]const u8, name, e);
+            }
+        } else if (comptime std.mem.eql(u8, type_str, "enum_list")) {
+            const val = opts.step.owner.option([]const []const u8, name, desc);
+            if (val orelse if (@hasField(Opt, "default")) @as(?[]const []const u8, comptime toEnumSlice(opt.default)) else null) |e| {
+                opts.addOption([]const []const u8, name, e);
+            }
+        } else if (comptime isIntType(type_str)) {
+            const default: i64 = if (@hasField(Opt, "default")) opt.default else 0;
+            const val = opts.step.owner.option(i64, name, desc);
+            opts.addOption(i64, name, val orelse default);
+        } else if (comptime isFloatType(type_str)) {
+            const default: f64 = if (@hasField(Opt, "default")) opt.default else 0.0;
+            const val = opts.step.owner.option(f64, name, desc);
+            opts.addOption(f64, name, val orelse default);
+        }
+    }
+
+    // --- Import wiring ---
+
+    fn wireAllImports(self: *BuildRunner, comptime manifest: anytype) !void {
+        if (@hasField(@TypeOf(manifest), "modules")) {
+            inline for (@typeInfo(@TypeOf(manifest.modules)).@"struct".fields) |field| {
+                const mod = @field(manifest.modules, field.name);
+                if (@hasField(@TypeOf(mod), "imports")) {
+                    if (self.modules.get(field.name)) |m| {
+                        self.wireModuleImports(m, mod.imports);
                     }
                 }
             }
         }
-        if (config.tests) |tests| {
-            for (tests.values()) |t| {
-                if (t.root_module == .module) {
-                    if (t.root_module.module.imports) |imports| {
-                        const name = t.root_module.module.name orelse continue;
-                        const m = self.modules.get(name) orelse continue;
-                        self.wireImports(m, imports);
+
+        // Wire imports for inline modules in executables, libraries, objects, tests
+        inline for (.{ "executables", "libraries", "objects", "tests" }) |section| {
+            if (@hasField(@TypeOf(manifest), section)) {
+                inline for (@typeInfo(@TypeOf(@field(manifest, section))).@"struct".fields) |field| {
+                    const item = @field(@field(manifest, section), field.name);
+                    if (@typeInfo(@TypeOf(item.root_module)) == .@"struct") {
+                        if (@hasField(@TypeOf(item.root_module), "imports")) {
+                            const mod_name: []const u8 = if (@hasField(@TypeOf(item.root_module), "name"))
+                                item.root_module.name
+                            else
+                                field.name;
+                            if (self.modules.get(mod_name)) |m| {
+                                self.wireModuleImports(m, item.root_module.imports);
+                            }
+                        }
                     }
                 }
             }
         }
     }
 
-    fn wireDependsOn(self: *BuildRunner, config: Config) void {
-        inline for (.{
-            config.executables,
-            config.libraries,
-            config.objects,
-        }) |maybe_map| {
-            if (maybe_map) |map| {
-                for (map.keys(), map.values()) |name, item| {
-                    if (@field(item, "depends_on")) |deps| {
-                        const this_step = self.install_steps.get(name) orelse continue;
-                        for (deps) |dep_name| {
-                            const dep_step = self.install_steps.get(dep_name) orelse {
-                                std.log.warn("zbuild: depends_on references unknown artifact '{s}'", .{dep_name});
-                                continue;
-                            };
-                            this_step.dependOn(dep_step);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    fn wireImports(self: *BuildRunner, module: *std.Build.Module, imports: []const []const u8) void {
-        for (imports) |import_name| {
+    fn wireModuleImports(self: *BuildRunner, module: *std.Build.Module, comptime imports: anytype) void {
+        inline for (@typeInfo(@TypeOf(imports)).@"struct".fields) |field| {
+            const import_name: []const u8 = @field(imports, field.name);
             const resolved = self.resolveImport(import_name);
             module.addImport(import_name, resolved);
         }
     }
+
+    // --- depends_on wiring ---
+
+    fn wireDependsOn(self: *BuildRunner, comptime manifest: anytype) void {
+        inline for (.{ "executables", "libraries", "objects" }) |section| {
+            if (@hasField(@TypeOf(manifest), section)) {
+                inline for (@typeInfo(@TypeOf(@field(manifest, section))).@"struct".fields) |field| {
+                    const item = @field(@field(manifest, section), field.name);
+                    if (@hasField(@TypeOf(item), "depends_on")) {
+                        if (self.install_steps.get(field.name)) |this_step| {
+                            self.wireDependsOnList(this_step, item.depends_on);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn wireDependsOnList(self: *BuildRunner, step: *std.Build.Step, comptime deps: anytype) void {
+        inline for (@typeInfo(@TypeOf(deps)).@"struct".fields) |field| {
+            const dep_name: []const u8 = @field(deps, field.name);
+            const dep_step = self.install_steps.get(dep_name) orelse {
+                std.log.warn("zbuild: depends_on references unknown artifact '{s}'", .{dep_name});
+                continue;
+            };
+            step.dependOn(dep_step);
+        }
+    }
+
+    // --- Resolution helpers (runtime) ---
 
     fn resolveImport(self: *BuildRunner, import_name: []const u8) *std.Build.Module {
         if (self.modules.get(import_name)) |m| return m;
@@ -501,3 +526,44 @@ const BuildRunner = struct {
         );
     }
 };
+
+// --- Comptime helpers ---
+
+fn toStringSlice(comptime tuple: anytype) []const []const u8 {
+    const fields = @typeInfo(@TypeOf(tuple)).@"struct".fields;
+    var result: [fields.len][]const u8 = undefined;
+    inline for (fields, 0..) |field, i| {
+        result[i] = @field(tuple, field.name);
+    }
+    const final = result;
+    return &final;
+}
+
+fn toEnumSlice(comptime tuple: anytype) []const []const u8 {
+    const fields = @typeInfo(@TypeOf(tuple)).@"struct".fields;
+    var result: [fields.len][]const u8 = undefined;
+    inline for (fields, 0..) |field, i| {
+        result[i] = @tagName(@field(tuple, field.name));
+    }
+    const final = result;
+    return &final;
+}
+
+fn isIntType(comptime t: []const u8) bool {
+    return for ([_][]const u8{
+        "i8",  "u8",  "i16", "u16", "i32",  "u32",  "i64",  "u64",
+        "i128", "u128", "isize", "usize",
+        "c_short", "c_ushort", "c_int", "c_uint",
+        "c_long", "c_ulong", "c_longlong", "c_ulonglong",
+    }) |valid| {
+        if (std.mem.eql(u8, t, valid)) break true;
+    } else false;
+}
+
+fn isFloatType(comptime t: []const u8) bool {
+    return for ([_][]const u8{
+        "f16", "f32", "f64", "f80", "f128", "c_longdouble",
+    }) |valid| {
+        if (std.mem.eql(u8, t, valid)) break true;
+    } else false;
+}
