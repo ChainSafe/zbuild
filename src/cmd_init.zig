@@ -5,7 +5,6 @@ const GlobalOptions = @import("GlobalOptions.zig");
 const Config = @import("Config.zig");
 const sync = @import("cmd_sync.zig");
 const Package = @import("Package.zig");
-const Manifest = @import("Manifest.zig");
 
 pub fn exec(gpa: Allocator, arena: Allocator, global_opts: GlobalOptions) !void {
     const cwd = try std.fs.cwd().realpathAlloc(gpa, global_opts.project_dir);
@@ -91,8 +90,8 @@ fn sanitizeExampleName(arena: Allocator, bytes: []const u8) error{OutOfMemory}![
         else => continue,
     };
     if (!std.zig.isValidId(result.items)) return "foo";
-    if (result.items.len > Manifest.max_name_len)
-        result.shrinkRetainingCapacity(Manifest.max_name_len);
+    if (result.items.len > 64)
+        result.shrinkRetainingCapacity(64);
 
     return result.toOwnedSlice(arena);
 }

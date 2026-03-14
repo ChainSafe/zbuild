@@ -9,12 +9,12 @@ const remove_build_file = true;
 const cwd = "test";
 
 const test_cases = &[_][]const u8{
-    "fixtures/basic1.zbuild.zon",
-    "fixtures/basic2.zbuild.zon",
-    "fixtures/basic3.zbuild.zon",
-    "fixtures/basic4.zbuild.zon",
-    "fixtures/basic5.zbuild.zon",
-    "fixtures/basic6.zbuild.zon",
+    "fixtures/basic1.build.zig.zon",
+    "fixtures/basic2.build.zig.zon",
+    "fixtures/basic3.build.zig.zon",
+    "fixtures/basic4.build.zig.zon",
+    "fixtures/basic5.build.zig.zon",
+    "fixtures/basic6.build.zig.zon",
 };
 
 fn maybeCleanup(should_cleanup: bool) void {

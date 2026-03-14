@@ -49,7 +49,7 @@ pub fn parseArgs(allocator: Allocator, args: *Args) !GlobalOptions {
         .global_cache_dir = zig_env.global_cache_dir,
         .version = zig_env.version,
         .project_dir = try allocator.dupe(u8, "."),
-        .zbuild_file = try allocator.dupe(u8, "zbuild.zon"),
+        .zbuild_file = try allocator.dupe(u8, "build.zig.zon"),
         .no_sync = false,
     };
 

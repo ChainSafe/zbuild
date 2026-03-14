@@ -106,7 +106,7 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: *Args) !void {
     try wip_bundle.init(gpa);
     const config = Config.parseFromFile(arena, global_opts.zbuild_file, &wip_bundle) catch |err| switch (err) {
         error.FileNotFound => {
-            fatal("no zbuild file found", .{});
+            fatal("no build.zig.zon file found", .{});
         },
         error.OutOfMemory => {
             fatal("out of memory", .{});
