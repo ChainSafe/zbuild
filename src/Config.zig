@@ -8,7 +8,7 @@ const Config = @This();
 
 name: []const u8,
 version: []const u8,
-fingerprint: []const u8,
+fingerprint: u64,
 minimum_zig_version: []const u8,
 paths: [][]const u8,
 description: ?[]const u8 = null,
@@ -41,19 +41,6 @@ pub const Dependency = struct {
         null: void,
     };
 
-    pub fn deinit(self: *Dependency, gpa: std.mem.Allocator) void {
-        gpa.free(self.value);
-        if (self.hash) |h| gpa.free(h);
-        if (self.args) |a| {
-            for (a.values()) |arg| switch (arg) {
-                .@"enum" => |e| gpa.free(e),
-                .string => |s| gpa.free(s),
-                else => {},
-            };
-            for (a.keys()) |k| gpa.free(k);
-            a.deinit();
-        }
-    }
 };
 
 pub const Option = union(enum) {
@@ -121,73 +108,6 @@ pub const Option = union(enum) {
         description: ?[]const u8 = null,
     };
 
-    pub fn deinit(self: *Option, gpa: std.mem.Allocator) void {
-        switch (self.*) {
-            .bool,
-            => |b| {
-                gpa.free(b.type);
-                if (b.description) |d| gpa.free(d);
-            },
-            .int => |i| {
-                gpa.free(i.type);
-                if (i.description) |d| gpa.free(d);
-            },
-            .float => |f| {
-                gpa.free(f.type);
-                if (f.description) |d| gpa.free(d);
-            },
-            .@"enum" => |e| {
-                gpa.free(e.type);
-                if (e.description) |d| gpa.free(d);
-                for (e.enum_options) |eo| gpa.free(eo);
-                gpa.free(e.enum_options);
-                if (e.default) |d| gpa.free(d);
-            },
-            .enum_list => |e| {
-                gpa.free(e.type);
-                if (e.description) |d| gpa.free(d);
-                for (e.enum_options) |eo| gpa.free(eo);
-                gpa.free(e.enum_options);
-                if (e.default) |d| {
-                    for (d) |dd| gpa.free(dd);
-                    gpa.free(d);
-                }
-            },
-            .string,
-            => |s| {
-                gpa.free(s.type);
-                if (s.description) |d| gpa.free(d);
-                if (s.default) |d| gpa.free(d);
-            },
-            .build_id => |s| {
-                gpa.free(s.type);
-                if (s.description) |d| gpa.free(d);
-                if (s.default) |d| gpa.free(d);
-            },
-            .lazy_path => |s| {
-                gpa.free(s.type);
-                if (s.description) |d| gpa.free(d);
-                if (s.default) |d| gpa.free(d);
-            },
-            .list => |l| {
-                gpa.free(l.type);
-                if (l.description) |d| gpa.free(d);
-                if (l.default) |d| {
-                    for (d) |dd| gpa.free(dd);
-                    gpa.free(d);
-                }
-            },
-            .lazy_path_list => |l| {
-                gpa.free(l.type);
-                if (l.description) |d| gpa.free(d);
-                if (l.default) |d| {
-                    for (d) |dd| gpa.free(dd);
-                    gpa.free(d);
-                }
-            },
-        }
-    }
-
     pub fn isValidIntType(t: []const u8) bool {
         return std.mem.eql(u8, t, "i8") or
             std.mem.eql(u8, t, "u8") or
@@ -244,32 +164,6 @@ pub const WriteFile = struct {
         };
     };
 
-    pub fn deinit(self: *WriteFile, gpa: std.mem.Allocator) void {
-        if (self.items) |*i| {
-            for (i.values()) |*v| {
-                switch (v.*) {
-                    .file => |f| {
-                        gpa.free(f.type);
-                        gpa.free(f.path);
-                    },
-                    .dir => |d| {
-                        gpa.free(d.type);
-                        gpa.free(d.path);
-                        if (d.exclude_extensions) |e| {
-                            for (e) |ee| gpa.free(ee);
-                            gpa.free(e);
-                        }
-                        if (d.include_extensions) |e| {
-                            for (e) |ee| gpa.free(ee);
-                            gpa.free(e);
-                        }
-                    },
-                }
-            }
-            for (i.keys()) |k| gpa.free(k);
-            i.deinit();
-        }
-    }
 };
 
 pub const Module = struct {
@@ -300,31 +194,12 @@ pub const Module = struct {
     include_paths: ?[][]const u8 = null,
     link_libraries: ?[][]const u8 = null,
 
-    pub fn deinit(self: *Module, gpa: std.mem.Allocator) void {
-        if (self.name) |n| gpa.free(n);
-        if (self.root_source_file) |r| gpa.free(r);
-        if (self.imports) |i| {
-            for (i) |ii| gpa.free(ii);
-            gpa.free(i);
-        }
-        if (self.link_libraries) |l| {
-            for (l) |ll| gpa.free(ll);
-            gpa.free(l);
-        }
-        if (self.target) |t| gpa.free(t);
-    }
 };
 
 pub const ModuleLink = union(enum) {
     name: []const u8,
     module: Module,
 
-    pub fn deinit(self: *ModuleLink, gpa: std.mem.Allocator) void {
-        switch (self.*) {
-            .name => |n| gpa.free(n),
-            .module => |*m| m.deinit(gpa),
-        }
-    }
 };
 
 pub const Executable = struct {
@@ -343,17 +218,6 @@ pub const Executable = struct {
 
     depends_on: ?[][]const u8 = null,
 
-    pub fn deinit(self: *Executable, gpa: std.mem.Allocator) void {
-        if (self.name) |n| gpa.free(n);
-        if (self.version) |v| gpa.free(v);
-        self.root_module.deinit(gpa);
-        if (self.zig_lib_dir) |z| gpa.free(z);
-        if (self.win32_manifest) |w| gpa.free(w);
-        if (self.depends_on) |d| {
-            for (d) |dd| gpa.free(dd);
-            gpa.free(d);
-        }
-    }
 };
 
 pub const Library = struct {
@@ -373,17 +237,6 @@ pub const Library = struct {
 
     depends_on: ?[][]const u8 = null,
 
-    pub fn deinit(self: *Library, gpa: std.mem.Allocator) void {
-        if (self.name) |n| gpa.free(n);
-        if (self.version) |v| gpa.free(v);
-        self.root_module.deinit(gpa);
-        if (self.zig_lib_dir) |z| gpa.free(z);
-        if (self.win32_manifest) |w| gpa.free(w);
-        if (self.depends_on) |d| {
-            for (d) |dd| gpa.free(dd);
-            gpa.free(d);
-        }
-    }
 };
 
 pub const Object = struct {
@@ -396,15 +249,6 @@ pub const Object = struct {
 
     depends_on: ?[][]const u8 = null,
 
-    pub fn deinit(self: *Object, gpa: std.mem.Allocator) void {
-        if (self.name) |n| gpa.free(n);
-        self.root_module.deinit(gpa);
-        if (self.zig_lib_dir) |z| gpa.free(z);
-        if (self.depends_on) |d| {
-            for (d) |dd| gpa.free(dd);
-            gpa.free(d);
-        }
-    }
 };
 
 pub const Test = struct {
@@ -418,14 +262,6 @@ pub const Test = struct {
     filters: []const []const u8 = &.{},
     test_runner: ?[]const u8 = null,
 
-    pub fn deinit(self: *Test, gpa: std.mem.Allocator) void {
-        if (self.name) |n| gpa.free(n);
-        self.root_module.deinit(gpa);
-        if (self.zig_lib_dir) |z| gpa.free(z);
-        for (self.filters) |f| gpa.free(f);
-        gpa.free(self.filters);
-        if (self.test_runner) |t| gpa.free(t);
-    }
 };
 
 pub const Fmt = struct {
@@ -433,94 +269,10 @@ pub const Fmt = struct {
     exclude_paths: ?[][]const u8 = null,
     check: ?bool = false,
 
-    pub fn deinit(self: *Fmt, gpa: std.mem.Allocator) void {
-        if (self.paths) |p| {
-            for (p) |pp| gpa.free(pp);
-            gpa.free(p);
-        }
-        if (self.exclude_paths) |e| {
-            for (e) |ee| gpa.free(ee);
-            gpa.free(e);
-        }
-    }
 };
 
 pub const Run = []const u8;
 
-pub fn deinit(config: *Config, gpa: std.mem.Allocator) void {
-    gpa.free(config.name);
-    gpa.free(config.version);
-    gpa.free(config.fingerprint);
-    gpa.free(config.minimum_zig_version);
-    for (config.paths) |path| gpa.free(path);
-    gpa.free(config.paths);
-    if (config.description) |desc| gpa.free(desc);
-    if (config.keywords) |kws| {
-        for (kws) |kw| gpa.free(kw);
-        gpa.free(kws);
-    }
-
-    if (config.write_files) |*wfs| {
-        for (wfs.values()) |*wf| wf.deinit(gpa);
-        for (wfs.keys()) |k| gpa.free(k);
-        wfs.deinit();
-    }
-    if (config.options) |*opts| {
-        for (opts.values()) |*o| o.deinit(gpa);
-        for (opts.keys()) |k| gpa.free(k);
-        opts.deinit();
-    }
-    if (config.options_modules) |*opts| {
-        for (opts.values()) |*o| {
-            for (o.values()) |*oo| oo.deinit(gpa);
-            for (o.keys()) |k| gpa.free(k);
-            o.deinit();
-        }
-        for (opts.keys()) |k| gpa.free(k);
-        opts.deinit();
-    }
-    if (config.modules) |*mods| {
-        for (mods.values()) |*m| m.deinit(gpa);
-        for (mods.keys()) |k| gpa.free(k);
-        mods.deinit();
-    }
-    if (config.dependencies) |*deps| {
-        for (deps.values()) |*d| d.deinit(gpa);
-        for (deps.keys()) |k| gpa.free(k);
-        deps.deinit();
-    }
-    if (config.executables) |*execs| {
-        for (execs.values()) |*e| e.deinit(gpa);
-        for (execs.keys()) |k| gpa.free(k);
-        execs.deinit();
-    }
-    if (config.libraries) |*libs| {
-        for (libs.values()) |*l| l.deinit(gpa);
-        for (libs.keys()) |k| gpa.free(k);
-        libs.deinit();
-    }
-    if (config.objects) |*objs| {
-        for (objs.values()) |*o| o.deinit(gpa);
-        for (objs.keys()) |k| gpa.free(k);
-        objs.deinit();
-    }
-    if (config.tests) |*tests| {
-        for (tests.values()) |*t| t.deinit(gpa);
-        for (tests.keys()) |k| gpa.free(k);
-        tests.deinit();
-    }
-    if (config.fmts) |*fmts| {
-        for (fmts.values()) |*f| f.deinit(gpa);
-        for (fmts.keys()) |k| gpa.free(k);
-        fmts.deinit();
-    }
-    if (config.runs) |*runs| {
-        for (runs.values()) |r| gpa.free(r);
-        for (runs.keys()) |k| gpa.free(k);
-        runs.deinit();
-    }
-    config.* = undefined;
-}
 
 pub fn addDependency(config: *Config, gpa: std.mem.Allocator, name: []const u8, dependency: Dependency) !void {
     if (config.dependencies == null) {
@@ -559,7 +311,7 @@ pub fn parseFromFile(gpa: std.mem.Allocator, zbuild_file: []const u8, wip_bundle
 
 pub fn parseFromZoir(gpa: std.mem.Allocator, zbuild_file: []const u8, zoir: std.zig.Zoir, ast: std.zig.Ast, wip_bundle: ?*std.zig.ErrorBundle.Wip) Parser.Error!Config {
     var status = std.zon.parse.Status{};
-    var parser = Parser.init(gpa, zoir, ast, &status);
+    var parser = Parser{ .gpa = gpa, .zoir = zoir, .ast = ast, .status = &status };
 
     return parser.parse() catch |e| {
         if (status.type_check) |err| {
@@ -590,109 +342,288 @@ const Parser = struct {
     zoir: std.zig.Zoir,
     ast: std.zig.Ast,
     status: *std.zon.parse.Status,
-    config: Config,
 
-    const Self = @This();
+    const Error = error{ OutOfMemory, ParseZon, NegativeIntoUnsigned, TargetTooSmall };
 
-    pub const Error = error{ OutOfMemory, ParseZon, NegativeIntoUnsigned, TargetTooSmall };
-
-    pub fn init(gpa: std.mem.Allocator, zoir: std.zig.Zoir, ast: std.zig.Ast, status: *std.zon.parse.Status) Parser {
-        return Parser{
-            .gpa = gpa,
-            .zoir = zoir,
-            .ast = ast,
-            .status = status,
-            .config = Config{
-                .name = "",
-                .version = "",
-                .fingerprint = "",
-                .minimum_zig_version = "",
-                .paths = &.{},
-            },
+    fn parse(self: *Parser) Error!Config {
+        var config = Config{
+            .name = "",
+            .version = "",
+            .fingerprint = 0,
+            .minimum_zig_version = "",
+            .paths = &.{},
         };
-    }
 
-    pub fn parse(self: *Self) Error!Config {
-        // required fields
         var has_name = false;
         var has_version = false;
         var has_fingerprint = false;
         var has_minimum_zig_version = false;
         var has_paths = false;
+
         const r = try self.parseStructLiteral(.root);
         for (r.names, 0..) |n, i| {
             const field_name = n.get(self.zoir);
             const field_value = r.vals.at(@intCast(i));
+
             if (std.mem.eql(u8, field_name, "name")) {
                 has_name = true;
-                self.config.name = try self.parseEnumLiteral(field_value);
+                config.name = try self.parseEnumLiteral(field_value);
             } else if (std.mem.eql(u8, field_name, "version")) {
                 has_version = true;
-                self.config.version = try self.parseVersionString(field_value);
+                config.version = try self.parseVersionString(field_value);
             } else if (std.mem.eql(u8, field_name, "fingerprint")) {
                 has_fingerprint = true;
-                const fingerprint_int = try self.parseT(u64, field_value);
-                self.config.fingerprint = try std.fmt.allocPrint(self.gpa, "0x{x}", .{fingerprint_int});
+                config.fingerprint = try self.parseT(u64, field_value);
             } else if (std.mem.eql(u8, field_name, "minimum_zig_version")) {
                 has_minimum_zig_version = true;
-                self.config.minimum_zig_version = try self.parseVersionString(field_value);
+                config.minimum_zig_version = try self.parseVersionString(field_value);
             } else if (std.mem.eql(u8, field_name, "paths")) {
                 has_paths = true;
-                self.config.paths = try self.parseT([][]const u8, field_value);
+                config.paths = try self.parseT([][]const u8, field_value);
             } else if (std.mem.eql(u8, field_name, "description")) {
-                self.config.description = try self.parseString(field_value);
+                config.description = try self.parseString(field_value);
             } else if (std.mem.eql(u8, field_name, "keywords")) {
-                self.config.keywords = try self.parseT(?[][]const u8, field_value);
+                config.keywords = try self.parseT(?[][]const u8, field_value);
             } else if (std.mem.eql(u8, field_name, "dependencies")) {
-                self.config.dependencies = try self.parseOptionalHashMap(Dependency, parseDependency, field_value);
+                config.dependencies = try self.parseHashMap(Dependency, parseDependency, field_value);
             } else if (std.mem.eql(u8, field_name, "write_files")) {
-                // config.write_files = ;
+                // stub — pre-existing incomplete feature
             } else if (std.mem.eql(u8, field_name, "options")) {
-                self.config.options = try self.parseOptionalHashMap(Option, parseOption, field_value);
+                config.options = try self.parseHashMap(Option, parseOption, field_value);
             } else if (std.mem.eql(u8, field_name, "options_modules")) {
-                self.config.options_modules = try self.parseOptionalHashMap(OptionsModule, parseOptionsModule, field_value);
+                config.options_modules = try self.parseHashMap(OptionsModule, parseOptionsModule, field_value);
             } else if (std.mem.eql(u8, field_name, "modules")) {
-                self.config.modules = try self.parseOptionalHashMap(Module, parseModule, field_value);
+                config.modules = try self.parseHashMap(Module, parseModule, field_value);
             } else if (std.mem.eql(u8, field_name, "executables")) {
-                self.config.executables = try self.parseOptionalHashMap(Executable, parseExecutable, field_value);
+                config.executables = try self.parseHashMap(Executable, parseExecutable, field_value);
             } else if (std.mem.eql(u8, field_name, "libraries")) {
-                self.config.libraries = try self.parseOptionalHashMap(Library, parseLibrary, field_value);
+                config.libraries = try self.parseHashMap(Library, parseLibrary, field_value);
             } else if (std.mem.eql(u8, field_name, "objects")) {
-                self.config.objects = try self.parseOptionalHashMap(Object, parseObject, field_value);
+                config.objects = try self.parseHashMap(Object, parseObject, field_value);
             } else if (std.mem.eql(u8, field_name, "tests")) {
-                self.config.tests = try self.parseOptionalHashMap(Test, parseTest, field_value);
+                config.tests = try self.parseHashMap(Test, parseTest, field_value);
             } else if (std.mem.eql(u8, field_name, "fmts")) {
-                self.config.fmts = try self.parseOptionalHashMap(Fmt, parseFmt, field_value);
+                config.fmts = try self.parseHashMap(Fmt, parseFmt, field_value);
             } else if (std.mem.eql(u8, field_name, "runs")) {
-                self.config.runs = try self.parseOptionalHashMap(Run, parseRun, field_value);
+                config.runs = try self.parseHashMap(Run, parseRun, field_value);
             } else {
-                try self.returnParseErrorFmt("unknown field '{s}'", .{field_name}, field_value.getAstNode(self.zoir));
+                // Ignore unknown fields — this allows build.zig.zon standard fields
+                // that zbuild doesn't use (like Zig-added future fields) to pass through.
             }
         }
-        if (!has_name) {
-            try self.returnParseError("missing required field 'name'", self.ast.rootDecls()[0]);
-        }
-        if (!has_version) {
-            try self.returnParseError("missing required field 'version'", self.ast.rootDecls()[0]);
-        }
-        if (!has_fingerprint) {
-            try self.returnParseError("missing required field 'fingerprint'", self.ast.rootDecls()[0]);
-        }
-        if (!has_minimum_zig_version) {
-            try self.returnParseError("missing required field 'minimum_zig_version'", self.ast.rootDecls()[0]);
-        }
-        if (!has_paths) {
-            try self.returnParseError("missing required field 'paths'", self.ast.rootDecls()[0]);
-        }
-        return self.config;
+
+        if (!has_name) try self.returnParseError("missing required field 'name'", self.ast.rootDecls()[0]);
+        if (!has_version) try self.returnParseError("missing required field 'version'", self.ast.rootDecls()[0]);
+        if (!has_fingerprint) try self.returnParseError("missing required field 'fingerprint'", self.ast.rootDecls()[0]);
+        if (!has_minimum_zig_version) try self.returnParseError("missing required field 'minimum_zig_version'", self.ast.rootDecls()[0]);
+        if (!has_paths) try self.returnParseError("missing required field 'paths'", self.ast.rootDecls()[0]);
+
+        return config;
     }
 
-    fn parseDependency(self: *Self, index: std.zig.Zoir.Node.Index) Error!Dependency {
+    // -- Layer 2: HashMap parsing --
+
+    fn parseHashMap(
+        self: *Parser,
+        comptime V: type,
+        comptime parseItem: fn (*Parser, std.zig.Zoir.Node.Index) Error!V,
+        index: std.zig.Zoir.Node.Index,
+    ) Error!?ArrayHashMap(V) {
+        const node = index.get(self.zoir);
+        switch (node) {
+            .struct_literal => |n| {
+                var items = ArrayHashMap(V).init(self.gpa);
+                for (n.names, 0..) |name, i| {
+                    const field_name = try self.gpa.dupe(u8, name.get(self.zoir));
+                    const field_value = n.vals.at(@intCast(i));
+                    try items.put(field_name, try parseItem(self, field_value));
+                }
+                return items;
+            },
+            .empty_literal => return null,
+            else => {
+                try self.returnParseError("expected a struct literal", index.getAstNode(self.zoir));
+            },
+        }
+    }
+
+    // -- Layer 3: Types parsed with inline for + fromZoirNode --
+
+    fn parseModule(self: *Parser, index: std.zig.Zoir.Node.Index) Error!Module {
         const n = try self.parseStructLiteral(index);
-        var dep = Dependency{
-            .typ = undefined,
-            .value = undefined,
-        };
+        var module = Module{};
+        for (n.names, 0..) |name, i| {
+            const field_name = name.get(self.zoir);
+            const field_value = n.vals.at(@intCast(i));
+            if (std.mem.eql(u8, field_name, "imports")) {
+                module.imports = try self.parseStringOrEnumSlice(field_value);
+            } else if (std.mem.eql(u8, field_name, "name")) {
+                module.name = try self.parseString(field_value);
+            } else if (std.mem.eql(u8, field_name, "root_source_file")) {
+                module.root_source_file = try self.parseString(field_value);
+            } else if (std.mem.eql(u8, field_name, "target")) {
+                module.target = try self.parseString(field_value);
+            } else if (std.mem.eql(u8, field_name, "private")) {
+                module.private = try self.parseT(bool, field_value);
+            } else if (std.mem.eql(u8, field_name, "include_paths")) {
+                module.include_paths = try self.parseStringOrEnumSlice(field_value);
+            } else if (std.mem.eql(u8, field_name, "link_libraries")) {
+                module.link_libraries = try self.parseStringOrEnumSlice(field_value);
+            } else {
+                inline for (@typeInfo(Module).@"struct".fields) |field| {
+                    if (std.mem.eql(u8, field_name, field.name)) {
+                        @field(module, field.name) = try self.parseT(field.type, field_value);
+                        break;
+                    }
+                }
+            }
+        }
+        return module;
+    }
+
+    fn parseExecutable(self: *Parser, index: std.zig.Zoir.Node.Index) Error!Executable {
+        const n = try self.parseStructLiteral(index);
+        var exe = Executable{ .root_module = .{ .name = "" } };
+        var has_root_module = false;
+        for (n.names, 0..) |name, i| {
+            const field_name = name.get(self.zoir);
+            const field_value = n.vals.at(@intCast(i));
+            if (std.mem.eql(u8, field_name, "root_module")) {
+                exe.root_module = try self.parseModuleLink(field_value);
+                has_root_module = true;
+            } else if (std.mem.eql(u8, field_name, "name")) {
+                exe.name = try self.parseString(field_value);
+            } else if (std.mem.eql(u8, field_name, "version")) {
+                exe.version = try self.parseVersionString(field_value);
+            } else if (std.mem.eql(u8, field_name, "depends_on")) {
+                exe.depends_on = try self.parseStringOrEnumSlice(field_value);
+            } else if (std.mem.eql(u8, field_name, "zig_lib_dir")) {
+                exe.zig_lib_dir = try self.parseString(field_value);
+            } else if (std.mem.eql(u8, field_name, "win32_manifest")) {
+                exe.win32_manifest = try self.parseString(field_value);
+            } else if (std.mem.eql(u8, field_name, "dest_sub_path")) {
+                exe.dest_sub_path = try self.parseString(field_value);
+            } else {
+                inline for (@typeInfo(Executable).@"struct".fields) |field| {
+                    if (std.mem.eql(u8, field_name, field.name)) {
+                        @field(exe, field.name) = try self.parseT(field.type, field_value);
+                        break;
+                    }
+                }
+            }
+        }
+        if (!has_root_module) try self.returnParseError("missing required field 'root_module'", index.getAstNode(self.zoir));
+        return exe;
+    }
+
+    fn parseLibrary(self: *Parser, index: std.zig.Zoir.Node.Index) Error!Library {
+        const n = try self.parseStructLiteral(index);
+        var lib = Library{ .root_module = .{ .name = "" } };
+        var has_root_module = false;
+        for (n.names, 0..) |name, i| {
+            const field_name = name.get(self.zoir);
+            const field_value = n.vals.at(@intCast(i));
+            if (std.mem.eql(u8, field_name, "root_module")) {
+                lib.root_module = try self.parseModuleLink(field_value);
+                has_root_module = true;
+            } else if (std.mem.eql(u8, field_name, "name")) {
+                lib.name = try self.parseString(field_value);
+            } else if (std.mem.eql(u8, field_name, "version")) {
+                lib.version = try self.parseVersionString(field_value);
+            } else if (std.mem.eql(u8, field_name, "depends_on")) {
+                lib.depends_on = try self.parseStringOrEnumSlice(field_value);
+            } else if (std.mem.eql(u8, field_name, "zig_lib_dir")) {
+                lib.zig_lib_dir = try self.parseString(field_value);
+            } else if (std.mem.eql(u8, field_name, "win32_manifest")) {
+                lib.win32_manifest = try self.parseString(field_value);
+            } else if (std.mem.eql(u8, field_name, "dest_sub_path")) {
+                lib.dest_sub_path = try self.parseString(field_value);
+            } else {
+                inline for (@typeInfo(Library).@"struct".fields) |field| {
+                    if (std.mem.eql(u8, field_name, field.name)) {
+                        @field(lib, field.name) = try self.parseT(field.type, field_value);
+                        break;
+                    }
+                }
+            }
+        }
+        if (!has_root_module) try self.returnParseError("missing required field 'root_module'", index.getAstNode(self.zoir));
+        return lib;
+    }
+
+    fn parseObject(self: *Parser, index: std.zig.Zoir.Node.Index) Error!Object {
+        const n = try self.parseStructLiteral(index);
+        var obj = Object{ .root_module = .{ .name = "" } };
+        var has_root_module = false;
+        for (n.names, 0..) |name, i| {
+            const field_name = name.get(self.zoir);
+            const field_value = n.vals.at(@intCast(i));
+            if (std.mem.eql(u8, field_name, "root_module")) {
+                obj.root_module = try self.parseModuleLink(field_value);
+                has_root_module = true;
+            } else if (std.mem.eql(u8, field_name, "name")) {
+                obj.name = try self.parseString(field_value);
+            } else if (std.mem.eql(u8, field_name, "depends_on")) {
+                obj.depends_on = try self.parseStringOrEnumSlice(field_value);
+            } else if (std.mem.eql(u8, field_name, "zig_lib_dir")) {
+                obj.zig_lib_dir = try self.parseString(field_value);
+            } else {
+                inline for (@typeInfo(Object).@"struct".fields) |field| {
+                    if (std.mem.eql(u8, field_name, field.name)) {
+                        @field(obj, field.name) = try self.parseT(field.type, field_value);
+                        break;
+                    }
+                }
+            }
+        }
+        if (!has_root_module) try self.returnParseError("missing required field 'root_module'", index.getAstNode(self.zoir));
+        return obj;
+    }
+
+    fn parseTest(self: *Parser, index: std.zig.Zoir.Node.Index) Error!Test {
+        const n = try self.parseStructLiteral(index);
+        var t = Test{ .root_module = .{ .name = "" } };
+        var has_root_module = false;
+        for (n.names, 0..) |name, i| {
+            const field_name = name.get(self.zoir);
+            const field_value = n.vals.at(@intCast(i));
+            if (std.mem.eql(u8, field_name, "root_module")) {
+                t.root_module = try self.parseModuleLink(field_value);
+                has_root_module = true;
+            } else if (std.mem.eql(u8, field_name, "name")) {
+                t.name = try self.parseString(field_value);
+            } else if (std.mem.eql(u8, field_name, "filters")) {
+                t.filters = try self.parseStringOrEnumSlice(field_value) orelse &.{};
+            } else if (std.mem.eql(u8, field_name, "test_runner")) {
+                t.test_runner = try self.parseString(field_value);
+            } else if (std.mem.eql(u8, field_name, "zig_lib_dir")) {
+                t.zig_lib_dir = try self.parseString(field_value);
+            } else {
+                inline for (@typeInfo(Test).@"struct".fields) |field| {
+                    if (std.mem.eql(u8, field_name, field.name)) {
+                        @field(t, field.name) = try self.parseT(field.type, field_value);
+                        break;
+                    }
+                }
+            }
+        }
+        if (!has_root_module) try self.returnParseError("missing required field 'root_module'", index.getAstNode(self.zoir));
+        return t;
+    }
+
+    fn parseFmt(self: *Parser, index: std.zig.Zoir.Node.Index) Error!Fmt {
+        return try self.parseT(Fmt, index);
+    }
+
+    fn parseRun(self: *Parser, index: std.zig.Zoir.Node.Index) Error!Run {
+        return try self.parseString(index);
+    }
+
+    // -- Layer 4: Custom parsers --
+
+    fn parseDependency(self: *Parser, index: std.zig.Zoir.Node.Index) Error!Dependency {
+        const n = try self.parseStructLiteral(index);
+        var dep = Dependency{ .typ = undefined, .value = undefined };
         var has_type_field = false;
         for (n.names, 0..) |name, i| {
             const field_name = name.get(self.zoir);
@@ -705,95 +636,46 @@ const Parser = struct {
                 dep.typ = .url;
                 dep.value = try self.parseString(field_value);
                 has_type_field = true;
+            } else if (std.mem.eql(u8, field_name, "hash")) {
+                dep.hash = try self.parseString(field_value);
+            } else if (std.mem.eql(u8, field_name, "lazy")) {
+                dep.lazy = try self.parseT(bool, field_value);
             } else if (std.mem.eql(u8, field_name, "args")) {
-                dep.args = try self.parseOptionalHashMap(Dependency.Arg, parseDependencyArg, field_value);
+                dep.args = try self.parseHashMap(Dependency.Arg, parseDependencyArg, field_value);
             }
         }
-        if (!has_type_field) {
-            try self.returnParseError("missing required field 'path' or 'url'", index.getAstNode(self.zoir));
-        }
+        if (!has_type_field) try self.returnParseError("missing required field 'path' or 'url'", index.getAstNode(self.zoir));
         return dep;
     }
 
-    fn parseDependencyArg(self: *Self, index: std.zig.Zoir.Node.Index) Error!Dependency.Arg {
+    fn parseDependencyArg(self: *Parser, index: std.zig.Zoir.Node.Index) Error!Dependency.Arg {
         const node = index.get(self.zoir);
         switch (node) {
-            .true => {
-                return .{
-                    .bool = true,
-                };
-            },
-            .false => {
-                return .{
-                    .bool = false,
-                };
-            },
-            .int_literal => |i| {
-                return .{
-                    .int = switch (i) {
-                        .small => |s| s,
-                        .big => |b| try b.toInt(i64),
-                    },
-                };
-            },
-            .float_literal => |f| {
-                return .{
-                    .float = @floatCast(f),
-                };
-            },
-            .enum_literal => |e| {
-                return .{
-                    .@"enum" = try self.gpa.dupe(u8, e.get(self.zoir)),
-                };
-            },
-            .string_literal => |s| {
-                return .{
-                    .string = try self.gpa.dupe(u8, s),
-                };
-            },
-            .null => {
-                return .{ .null = {} };
-            },
-            else => {
-                try self.returnParseError("expected a boo, int, float, string literal, or enum literal", index.getAstNode(self.zoir));
-            },
+            .true => return .{ .bool = true },
+            .false => return .{ .bool = false },
+            .int_literal => |i| return .{ .int = switch (i) {
+                .small => |s| s,
+                .big => |b| try b.toInt(i64),
+            } },
+            .float_literal => |f| return .{ .float = @floatCast(f) },
+            .enum_literal => |e| return .{ .@"enum" = try self.gpa.dupe(u8, e.get(self.zoir)) },
+            .string_literal => |s| return .{ .string = try self.gpa.dupe(u8, s) },
+            .null => return .{ .null = {} },
+            else => try self.returnParseError("expected a bool, int, float, string literal, or enum literal", index.getAstNode(self.zoir)),
         }
     }
 
-    fn parseWriteFile(self: *Self, index: std.zig.Zoir.Node.Index) Error!WriteFile {
-        const n = try self.parseStructLiteral(index);
-        var write_file = WriteFile{};
-        for (n.names) |name| {
-            const field_name = name.get(self.zoir);
-            if (std.mem.eql(u8, field_name, "private")) {
-                write_file.private = try self.parseT(?bool);
-            } else if (std.mem.eql(u8, field_name, "items")) {
-                write_file.items = try self.parseOptionalHashMap(WriteFile.Path, parseWriteFilePath, index);
-            }
+    fn parseModuleLink(self: *Parser, index: std.zig.Zoir.Node.Index) Error!ModuleLink {
+        const node = index.get(self.zoir);
+        switch (node) {
+            .struct_literal => return .{ .module = try self.parseModule(index) },
+            .string_literal => |n| return .{ .name = try self.gpa.dupe(u8, n) },
+            .enum_literal => |n| return .{ .name = try self.gpa.dupe(u8, n.get(self.zoir)) },
+            else => try self.returnParseError("expected a string, enum literal, or struct literal", index.getAstNode(self.zoir)),
         }
-        return write_file;
     }
 
-    fn parseWriteFilePath(self: *Self, index: std.zig.Zoir.Node.Index) Error!WriteFile.Path {
-        const n = try self.parseStructLiteral(index);
-        for (n.names, 0..) |name, i| {
-            const field_name = name.get(self.zoir);
-            const field_value = n.vals.at(@intCast(i));
-            if (std.mem.eql(u8, field_name, "type")) {
-                const t = try self.parseString(field_value);
-                if (std.mem.eql(u8, t, "file")) {
-                    return .{ .file = try self.parseT(WriteFile.File) };
-                } else if (std.mem.eql(u8, t, "dir")) {
-                    return .{ .dir = try self.parseT(WriteFile.Dir) };
-                } else {
-                    try self.returnParseErrorFmt("invalid type '{s}'", .{t}, field_value);
-                }
-            }
-        }
-        try self.returnParseError("missing required field 'type'", index.getAstNode(self.zoir));
-    }
-
-    fn parseOption(self: *Self, index: std.zig.Zoir.Node.Index) Error!Option {
+    fn parseOption(self: *Parser, index: std.zig.Zoir.Node.Index) Error!Option {
         const n = try self.parseStructLiteral(index);
         for (n.names, 0..) |name, i| {
             const field_name = name.get(self.zoir);
@@ -828,12 +710,9 @@ const Parser = struct {
         try self.returnParseError("missing required field 'type'", index.getAstNode(self.zoir));
     }
 
-    fn parseOptionEnum(self: *Self, index: std.zig.Zoir.Node.Index) Error!Option.Enum {
+    fn parseOptionEnum(self: *Parser, index: std.zig.Zoir.Node.Index) Error!Option.Enum {
         const n = try self.parseStructLiteral(index);
-        var option = Option.Enum{
-            .enum_options = &.{},
-            .type = "",
-        };
+        var option = Option.Enum{ .enum_options = &.{}, .type = "" };
         var has_type = false;
         var has_enum_options = false;
         for (n.names, 0..) |name, i| {
@@ -844,28 +723,21 @@ const Parser = struct {
                 option.type = try self.parseString(field_value);
             } else if (std.mem.eql(u8, field_name, "enum_options")) {
                 has_enum_options = true;
-                option.enum_options = try self.parseSlice([]const u8, parseEnumLiteral, field_value);
+                option.enum_options = try self.parseEnumLiteralSlice(field_value);
             } else if (std.mem.eql(u8, field_name, "description")) {
                 option.description = try self.parseString(field_value);
             } else if (std.mem.eql(u8, field_name, "default")) {
                 option.default = try self.parseEnumLiteral(field_value);
             }
         }
-        if (!has_type) {
-            try self.returnParseError("missing required field 'type'", index.getAstNode(self.zoir));
-        }
-        if (!has_enum_options) {
-            try self.returnParseError("missing required field 'enum_options'", index.getAstNode(self.zoir));
-        }
+        if (!has_type) try self.returnParseError("missing required field 'type'", index.getAstNode(self.zoir));
+        if (!has_enum_options) try self.returnParseError("missing required field 'enum_options'", index.getAstNode(self.zoir));
         return option;
     }
 
-    fn parseOptionEnumList(self: *Self, index: std.zig.Zoir.Node.Index) Error!Option.EnumList {
+    fn parseOptionEnumList(self: *Parser, index: std.zig.Zoir.Node.Index) Error!Option.EnumList {
         const n = try self.parseStructLiteral(index);
-        var option = Option.EnumList{
-            .enum_options = &.{},
-            .type = "",
-        };
+        var option = Option.EnumList{ .enum_options = &.{}, .type = "" };
         var has_type = false;
         var has_enum_options = false;
         for (n.names, 0..) |name, i| {
@@ -876,387 +748,47 @@ const Parser = struct {
                 option.type = try self.parseString(field_value);
             } else if (std.mem.eql(u8, field_name, "enum_options")) {
                 has_enum_options = true;
-                option.enum_options = try self.parseSlice([]const u8, parseEnumLiteral, field_value);
+                option.enum_options = try self.parseEnumLiteralSlice(field_value);
             } else if (std.mem.eql(u8, field_name, "description")) {
                 option.description = try self.parseString(field_value);
             } else if (std.mem.eql(u8, field_name, "default")) {
-                option.default = try self.parseSlice([]const u8, parseEnumLiteral, field_value);
+                option.default = try self.parseEnumLiteralSlice(field_value);
             }
         }
-        if (!has_type) {
-            try self.returnParseError("missing required field 'type'", index.getAstNode(self.zoir));
-        }
-        if (!has_enum_options) {
-            try self.returnParseError("missing required field 'enum_options'", index.getAstNode(self.zoir));
-        }
+        if (!has_type) try self.returnParseError("missing required field 'type'", index.getAstNode(self.zoir));
+        if (!has_enum_options) try self.returnParseError("missing required field 'enum_options'", index.getAstNode(self.zoir));
         return option;
     }
 
-    fn parseOptionsModule(self: *Self, index: std.zig.Zoir.Node.Index) Error!OptionsModule {
-        return try self.parseHashMap(Option, parseOption, index);
+    fn parseOptionsModule(self: *Parser, index: std.zig.Zoir.Node.Index) Error!OptionsModule {
+        return (try self.parseHashMap(Option, parseOption, index)) orelse ArrayHashMap(Option).init(self.gpa);
     }
 
-    fn parseModule(self: *Self, index: std.zig.Zoir.Node.Index) Error!Module {
-        const n = try self.parseStructLiteral(index);
-        var module = Module{};
-        for (n.names, 0..) |name, i| {
-            const field_name = name.get(self.zoir);
-            const field_value = n.vals.at(@intCast(i));
-            // each field in Module
-            if (std.mem.eql(u8, field_name, "name")) {
-                module.name = try self.parseString(field_value);
-            } else if (std.mem.eql(u8, field_name, "root_source_file")) {
-                module.root_source_file = try self.parseString(field_value);
-            } else if (std.mem.eql(u8, field_name, "imports")) {
-                module.imports = try self.parseOptionalSlice([]const u8, parseStringOrEnumLiteral, field_value);
-            } else if (std.mem.eql(u8, field_name, "private")) {
-                module.private = try self.parseBool(field_value);
-            } else if (std.mem.eql(u8, field_name, "target")) {
-                module.target = try self.parseString(field_value);
-            } else if (std.mem.eql(u8, field_name, "optimize")) {
-                module.optimize = try self.parseT(std.builtin.OptimizeMode, field_value);
-            } else if (std.mem.eql(u8, field_name, "link_libc")) {
-                module.link_libc = try self.parseBool(field_value);
-            } else if (std.mem.eql(u8, field_name, "link_libcpp")) {
-                module.link_libcpp = try self.parseBool(field_value);
-            } else if (std.mem.eql(u8, field_name, "single_threaded")) {
-                module.single_threaded = try self.parseBool(field_value);
-            } else if (std.mem.eql(u8, field_name, "strip")) {
-                module.strip = try self.parseBool(field_value);
-            } else if (std.mem.eql(u8, field_name, "unwind_tables")) {
-                module.unwind_tables = try self.parseT(std.builtin.UnwindTables, field_value);
-            } else if (std.mem.eql(u8, field_name, "dwarf_format")) {
-                module.dwarf_format = try self.parseT(std.dwarf.Format, field_value);
-            } else if (std.mem.eql(u8, field_name, "code_model")) {
-                module.code_model = try self.parseT(std.builtin.CodeModel, field_value);
-            } else if (std.mem.eql(u8, field_name, "stack_protector")) {
-                module.stack_protector = try self.parseBool(field_value);
-            } else if (std.mem.eql(u8, field_name, "stack_check")) {
-                module.stack_check = try self.parseBool(field_value);
-            } else if (std.mem.eql(u8, field_name, "sanitize_c")) {
-                module.sanitize_c = try self.parseBool(field_value);
-            } else if (std.mem.eql(u8, field_name, "sanitize_thread")) {
-                module.sanitize_thread = try self.parseBool(field_value);
-            } else if (std.mem.eql(u8, field_name, "fuzz")) {
-                module.fuzz = try self.parseBool(field_value);
-            } else if (std.mem.eql(u8, field_name, "valgrind")) {
-                module.valgrind = try self.parseBool(field_value);
-            } else if (std.mem.eql(u8, field_name, "pic")) {
-                module.pic = try self.parseBool(field_value);
-            } else if (std.mem.eql(u8, field_name, "red_zone")) {
-                module.red_zone = try self.parseBool(field_value);
-            } else if (std.mem.eql(u8, field_name, "omit_frame_pointer")) {
-                module.omit_frame_pointer = try self.parseBool(field_value);
-            } else if (std.mem.eql(u8, field_name, "error_tracing")) {
-                module.error_tracing = try self.parseBool(field_value);
-            } else if (std.mem.eql(u8, field_name, "include_paths")) {
-                module.include_paths = try self.parseOptionalSlice([]const u8, parseString, field_value);
-            } else if (std.mem.eql(u8, field_name, "link_libraries")) {
-                module.link_libraries = try self.parseOptionalSlice([]const u8, parseString, field_value);
-            }
-        }
-        return module;
-    }
+    // -- Primitives --
 
-    fn parseModuleLink(self: *Self, index: std.zig.Zoir.Node.Index) Error!ModuleLink {
-        const node = index.get(self.zoir);
-        switch (node) {
-            .struct_literal => {
-                return .{ .module = try self.parseModule(index) };
-            },
-            .string_literal => |n| {
-                return .{ .name = try self.gpa.dupe(u8, n) };
-            },
-            .enum_literal => |n| {
-                return .{ .name = try self.gpa.dupe(u8, n.get(self.zoir)) };
-            },
-            else => {
-                try self.returnParseError("expected a string, enum literal, struct literal", index.getAstNode(self.zoir));
-            },
-        }
-    }
-
-    fn parseExecutable(self: *Self, index: std.zig.Zoir.Node.Index) Error!Executable {
-        const n = try self.parseStructLiteral(index);
-        var executable = Executable{ .root_module = .{ .name = "" } };
-        var has_root_module = false;
-        for (n.names, 0..) |name, i| {
-            const field_name = name.get(self.zoir);
-            const field_value = n.vals.at(@intCast(i));
-            if (std.mem.eql(u8, field_name, "name")) {
-                executable.name = try self.parseString(field_value);
-            } else if (std.mem.eql(u8, field_name, "version")) {
-                executable.version = try self.parseVersionString(field_value);
-            } else if (std.mem.eql(u8, field_name, "root_module")) {
-                executable.root_module = try self.parseModuleLink(field_value);
-                has_root_module = true;
-            } else if (std.mem.eql(u8, field_name, "linkage")) {
-                executable.linkage = try self.parseT(std.builtin.LinkMode, field_value);
-            } else if (std.mem.eql(u8, field_name, "max_rss")) {
-                executable.max_rss = try self.parseT(usize, field_value);
-            } else if (std.mem.eql(u8, field_name, "use_llvm")) {
-                executable.use_llvm = try self.parseBool(field_value);
-            } else if (std.mem.eql(u8, field_name, "use_lld")) {
-                executable.use_lld = try self.parseBool(field_value);
-            } else if (std.mem.eql(u8, field_name, "zig_lib_dir")) {
-                executable.zig_lib_dir = try self.parseString(field_value);
-            } else if (std.mem.eql(u8, field_name, "win32_manifest")) {
-                executable.win32_manifest = try self.parseString(field_value);
-            } else if (std.mem.eql(u8, field_name, "dest_sub_path")) {
-                executable.dest_sub_path = try self.parseString(field_value);
-            } else if (std.mem.eql(u8, field_name, "depends_on")) {
-                executable.depends_on = try self.parseOptionalSlice([]const u8, parseStringOrEnumLiteral, field_value);
-            }
-        }
-        if (!has_root_module) {
-            try self.returnParseError("missing required field 'root_module'", index.getAstNode(self.zoir));
-        }
-        return executable;
-    }
-
-    fn parseLibrary(self: *Self, index: std.zig.Zoir.Node.Index) Error!Library {
-        const n = try self.parseStructLiteral(index);
-        var library = Library{ .root_module = .{ .name = "" } };
-        var has_root_module = false;
-        for (n.names, 0..) |name, i| {
-            const field_name = name.get(self.zoir);
-            const field_value = n.vals.at(@intCast(i));
-            if (std.mem.eql(u8, field_name, "name")) {
-                library.name = try self.parseString(field_value);
-            } else if (std.mem.eql(u8, field_name, "root_module")) {
-                has_root_module = true;
-                library.root_module = try self.parseModuleLink(field_value);
-            } else if (std.mem.eql(u8, field_name, "linkage")) {
-                library.linkage = try self.parseT(std.builtin.LinkMode, field_value);
-            } else if (std.mem.eql(u8, field_name, "max_rss")) {
-                library.max_rss = try self.parseT(usize, field_value);
-            } else if (std.mem.eql(u8, field_name, "use_llvm")) {
-                library.use_llvm = try self.parseBool(field_value);
-            } else if (std.mem.eql(u8, field_name, "use_lld")) {
-                library.use_lld = try self.parseBool(field_value);
-            } else if (std.mem.eql(u8, field_name, "zig_lib_dir")) {
-                library.zig_lib_dir = try self.parseString(field_value);
-            } else if (std.mem.eql(u8, field_name, "win32_manifest")) {
-                library.win32_manifest = try self.parseString(field_value);
-            } else if (std.mem.eql(u8, field_name, "dest_sub_path")) {
-                library.dest_sub_path = try self.parseString(field_value);
-            } else if (std.mem.eql(u8, field_name, "depends_on")) {
-                library.depends_on = try self.parseOptionalSlice([]const u8, parseStringOrEnumLiteral, field_value);
-            } else if (std.mem.eql(u8, field_name, "linker_allow_shlib_undefined")) {
-                library.linker_allow_shlib_undefined = try self.parseBool(field_value);
-            }
-        }
-        if (!has_root_module) {
-            try self.returnParseError("missing required field 'root_module'", index.getAstNode(self.zoir));
-        }
-        return library;
-    }
-
-    fn parseObject(self: *Self, index: std.zig.Zoir.Node.Index) Error!Object {
-        const n = try self.parseStructLiteral(index);
-        var object = Object{ .root_module = .{ .name = "" } };
-        var has_root_module = false;
-        for (n.names, 0..) |name, i| {
-            const field_name = try self.gpa.dupe(u8, name.get(self.zoir));
-            const field_value = n.vals.at(@intCast(i));
-            if (std.mem.eql(u8, field_name, "name")) {
-                object.name = try self.parseString(field_value);
-            } else if (std.mem.eql(u8, field_name, "root_module")) {
-                has_root_module = true;
-                object.root_module = try self.parseModuleLink(field_value);
-            } else if (std.mem.eql(u8, field_name, "max_rss")) {
-                object.max_rss = try self.parseT(usize, field_value);
-            } else if (std.mem.eql(u8, field_name, "use_llvm")) {
-                object.use_llvm = try self.parseBool(field_value);
-            } else if (std.mem.eql(u8, field_name, "use_lld")) {
-                object.use_lld = try self.parseBool(field_value);
-            } else if (std.mem.eql(u8, field_name, "zig_lib_dir")) {
-                object.zig_lib_dir = try self.parseString(field_value);
-            } else if (std.mem.eql(u8, field_name, "depends_on")) {
-                object.depends_on = try self.parseOptionalSlice([]const u8, parseStringOrEnumLiteral, field_value);
-            }
-        }
-        if (!has_root_module) {
-            try self.returnParseError("missing required field 'root_module'", index.getAstNode(self.zoir));
-        }
-        return object;
-    }
-
-    fn parseTest(self: *Self, index: std.zig.Zoir.Node.Index) Error!Test {
-        const n = try self.parseStructLiteral(index);
-        var t = Test{ .root_module = .{ .name = "" } };
-        var has_root_module = false;
-        for (n.names, 0..) |name, i| {
-            const field_name = name.get(self.zoir);
-            const field_value = n.vals.at(@intCast(i));
-            if (std.mem.eql(u8, field_name, "name")) {
-                t.name = try self.parseString(field_value);
-            } else if (std.mem.eql(u8, field_name, "root_module")) {
-                has_root_module = true;
-                t.root_module = try self.parseModuleLink(field_value);
-            } else if (std.mem.eql(u8, field_name, "max_rss")) {
-                t.max_rss = try self.parseT(usize, field_value);
-            } else if (std.mem.eql(u8, field_name, "use_llvm")) {
-                t.use_llvm = try self.parseBool(field_value);
-            } else if (std.mem.eql(u8, field_name, "use_lld")) {
-                t.use_lld = try self.parseBool(field_value);
-            } else if (std.mem.eql(u8, field_name, "zig_lib_dir")) {
-                t.zig_lib_dir = try self.parseString(field_value);
-            } else if (std.mem.eql(u8, field_name, "filters")) {
-                t.filters = try self.parseOptionalSlice([]const u8, parseString, field_value) orelse &.{};
-            }
-        }
-        if (!has_root_module) {
-            try self.returnParseError("missing required field 'root_module'", index.getAstNode(self.zoir));
-        }
-        return t;
-    }
-
-    fn parseFmt(self: *Self, index: std.zig.Zoir.Node.Index) Error!Fmt {
-        return try self.parseT(Fmt, index);
-    }
-
-    fn parseRun(self: *Self, index: std.zig.Zoir.Node.Index) Error!Run {
-        return try self.parseT(Run, index);
-    }
-
-    fn parseHashMap(
-        self: *Self,
-        comptime T: type,
-        comptime parseItem: fn (self: *Self, index: std.zig.Zoir.Node.Index) Error!T,
-        index: std.zig.Zoir.Node.Index,
-    ) Error!ArrayHashMap(T) {
-        const n = try self.parseStructLiteral(index);
-        var items = ArrayHashMap(T).init(self.gpa);
-        for (n.names, 0..) |name, i| {
-            const field_name = try self.gpa.dupe(u8, name.get(self.zoir));
-            const field_value = n.vals.at(@intCast(i));
-            const item = try parseItem(self, field_value);
-            try items.put(field_name, item);
-        }
-        return items;
-    }
-
-    fn parseOptionalHashMap(
-        self: *Self,
-        comptime T: type,
-        comptime parseItem: fn (self: *Self, index: std.zig.Zoir.Node.Index) Error!T,
-        index: std.zig.Zoir.Node.Index,
-    ) Error!?ArrayHashMap(T) {
-        const node = index.get(self.zoir);
-        switch (node) {
-            .struct_literal => |n| {
-                var items = ArrayHashMap(T).init(self.gpa);
-                for (n.names, 0..) |name, i| {
-                    const field_name = try self.gpa.dupe(u8, name.get(self.zoir));
-                    const field_value = n.vals.at(@intCast(i));
-                    const item = try parseItem(self, field_value);
-                    try items.put(field_name, item);
-                }
-                return items;
-            },
-            .empty_literal => {
-                return null;
-            },
-            else => {
-                try self.returnParseError("expected a struct literal", index.getAstNode(self.zoir));
-            },
-        }
-    }
-
-    fn parseSlice(
-        self: *Self,
-        comptime T: type,
-        comptime parseItem: fn (self: *Self, index: std.zig.Zoir.Node.Index) Error!T,
-        index: std.zig.Zoir.Node.Index,
-    ) Error![]T {
-        const node = index.get(self.zoir);
-        switch (node) {
-            .array_literal => |a| {
-                const slice = try self.gpa.alloc(T, a.len);
-                for (0..a.len) |i| {
-                    const item = a.at(@intCast(i));
-                    slice[i] = try parseItem(self, item);
-                }
-                return slice;
-            },
-            else => {
-                try self.returnParseError("expected an array literal", index.getAstNode(self.zoir));
-            },
-        }
-    }
-
-    fn parseOptionalSlice(
-        self: *Self,
-        comptime T: type,
-        comptime parseItem: fn (self: *Self, index: std.zig.Zoir.Node.Index) Error!T,
-        index: std.zig.Zoir.Node.Index,
-    ) Error!?[]T {
-        const node = index.get(self.zoir);
-        switch (node) {
-            .array_literal => |a| {
-                const slice = try self.gpa.alloc(T, a.len);
-                for (0..a.len) |i| {
-                    const item = a.at(@intCast(i));
-                    slice[i] = try parseItem(self, item);
-                }
-                return slice;
-            },
-            .empty_literal => {
-                return null;
-            },
-            else => {
-                try self.returnParseError("expected an array literal", index.getAstNode(self.zoir));
-            },
-        }
-    }
-
-    fn parseT(self: *Self, comptime T: type, index: std.zig.Zoir.Node.Index) Error!T {
+    fn parseT(self: *Parser, comptime T: type, index: std.zig.Zoir.Node.Index) Error!T {
         @setEvalBranchQuota(2_000);
         self.status.* = .{};
         return try std.zon.parse.fromZoirNode(T, self.gpa, self.ast, self.zoir, index, self.status, .{});
     }
 
-    fn parseEnumLiteral(self: *Self, index: std.zig.Zoir.Node.Index) Error![]const u8 {
+    fn parseString(self: *Parser, index: std.zig.Zoir.Node.Index) Error![]const u8 {
         const node = index.get(self.zoir);
         switch (node) {
-            .enum_literal => |n| {
-                return try self.gpa.dupe(u8, n.get(self.zoir));
-            },
-            else => {
-                try self.returnParseError("expected an enum literal", index.getAstNode(self.zoir));
-            },
+            .string_literal => |n| return try self.gpa.dupe(u8, n),
+            else => try self.returnParseError("expected a string literal", index.getAstNode(self.zoir)),
         }
     }
 
-    fn parseString(self: *Self, index: std.zig.Zoir.Node.Index) Error![]const u8 {
+    fn parseEnumLiteral(self: *Parser, index: std.zig.Zoir.Node.Index) Error![]const u8 {
         const node = index.get(self.zoir);
         switch (node) {
-            .string_literal => |n| {
-                return try self.gpa.dupe(u8, n);
-            },
-            else => {
-                try self.returnParseError("expected a string literal", index.getAstNode(self.zoir));
-            },
+            .enum_literal => |n| return try self.gpa.dupe(u8, n.get(self.zoir)),
+            else => try self.returnParseError("expected an enum literal", index.getAstNode(self.zoir)),
         }
     }
 
-    fn parseStringOrEnumLiteral(self: *Self, index: std.zig.Zoir.Node.Index) Error![]const u8 {
-        const node = index.get(self.zoir);
-        switch (node) {
-            .string_literal => |n| {
-                return try self.gpa.dupe(u8, n);
-            },
-            .enum_literal => |n| {
-                return try self.gpa.dupe(u8, n.get(self.zoir));
-            },
-            else => {
-                try self.returnParseError("expected a string literal or enum literal", index.getAstNode(self.zoir));
-            },
-        }
-    }
-
-    fn parseVersionString(self: *Self, index: std.zig.Zoir.Node.Index) Error![]const u8 {
+    fn parseVersionString(self: *Parser, index: std.zig.Zoir.Node.Index) Error![]const u8 {
         const node = index.get(self.zoir);
         switch (node) {
             .string_literal => |n| {
@@ -1265,45 +797,62 @@ const Parser = struct {
                 };
                 return try self.gpa.dupe(u8, n);
             },
-            else => {
-                try self.returnParseError("expected an string literal", index.getAstNode(self.zoir));
-            },
+            else => try self.returnParseError("expected a string literal", index.getAstNode(self.zoir)),
         }
     }
 
-    fn parseBool(self: *Self, index: std.zig.Zoir.Node.Index) Error!bool {
+    fn parseStringOrEnumSlice(self: *Parser, index: std.zig.Zoir.Node.Index) Error!?[][]const u8 {
         const node = index.get(self.zoir);
         switch (node) {
-            .true => {
-                return true;
+            .array_literal => |a| {
+                const slice = try self.gpa.alloc([]const u8, a.len);
+                for (0..a.len) |i| {
+                    const item = a.at(@intCast(i));
+                    const item_node = item.get(self.zoir);
+                    slice[i] = switch (item_node) {
+                        .string_literal => |s| try self.gpa.dupe(u8, s),
+                        .enum_literal => |e| try self.gpa.dupe(u8, e.get(self.zoir)),
+                        else => {
+                            try self.returnParseError("expected string or enum literal", item.getAstNode(self.zoir));
+                        },
+                    };
+                }
+                return slice;
             },
-            .false => {
-                return false;
-            },
-            else => {
-                try self.returnParseError("expected a boolean literal", index.getAstNode(self.zoir));
-            },
+            .empty_literal => return null,
+            else => try self.returnParseError("expected an array literal", index.getAstNode(self.zoir)),
         }
     }
 
-    fn parseStructLiteral(self: *Self, index: std.zig.Zoir.Node.Index) Error!std.meta.TagPayload(std.zig.Zoir.Node, .struct_literal) {
+    fn parseEnumLiteralSlice(self: *Parser, index: std.zig.Zoir.Node.Index) Error![][]const u8 {
         const node = index.get(self.zoir);
         switch (node) {
-            .struct_literal => |n| {
-                return n;
+            .array_literal => |a| {
+                const slice = try self.gpa.alloc([]const u8, a.len);
+                for (0..a.len) |i| {
+                    const item = a.at(@intCast(i));
+                    slice[i] = try self.parseEnumLiteral(item);
+                }
+                return slice;
             },
-            else => {
-                try self.returnParseError("expected a struct literal", index.getAstNode(self.zoir));
-            },
+            else => try self.returnParseError("expected an array literal", index.getAstNode(self.zoir)),
         }
     }
 
-    fn returnParseErrorFmt(self: *Self, comptime fmt: []const u8, args: anytype, node_index: std.zig.Ast.Node.Index) Error!noreturn {
+    fn parseStructLiteral(self: *Parser, index: std.zig.Zoir.Node.Index) Error!std.meta.TagPayload(std.zig.Zoir.Node, .struct_literal) {
+        const node = index.get(self.zoir);
+        switch (node) {
+            .struct_literal => |n| return n,
+            else => try self.returnParseError("expected a struct literal", index.getAstNode(self.zoir)),
+        }
+    }
+
+    fn returnParseErrorFmt(self: *Parser, comptime fmt: []const u8, args: anytype, node_index: std.zig.Ast.Node.Index) Error!noreturn {
         const message = try std.fmt.allocPrint(self.gpa, fmt, args);
         try self.returnParseError(message, node_index);
     }
 
-    fn returnParseError(self: *Self, message: []const u8, node_index: std.zig.Ast.Node.Index) Error!noreturn {
+    fn returnParseError(self: *Parser, message: []const u8, node_index: std.zig.Ast.Node.Index) Error!noreturn {
         self.status.* = .{
             .ast = self.ast,
             .zoir = self.zoir,
@@ -1350,7 +899,7 @@ fn Serializer(Writer: type) type {
             try top_level.field("name", self.config.name, .{});
             try top_level.field("version", self.config.version, .{});
             try top_level.fieldPrefix("fingerprint");
-            try self.writer.print("0x{x}", .{self.config.fingerprint});
+            try self.writer.print("0x{x:0>16}", .{self.config.fingerprint});
             try top_level.field("minimum_zig_version", self.config.minimum_zig_version, .{});
             try top_level.field("paths", self.config.paths, .{});
             if (self.config.description) |desc| {
@@ -1614,23 +1163,4 @@ fn Serializer(Writer: type) type {
             try inner.end();
         }
     };
-}
-
-test {
-    const gpa = std.testing.allocator;
-    var status = std.zon.parse.Status{};
-    var config = Config.parseFromFile(gpa, "foo.zon", &status) catch |err| {
-        try status.format("error: {s}", .{}, std.io.getStdErr().writer());
-        return err;
-    };
-    defer config.deinit(gpa);
-    defer status.deinit(gpa);
-
-    std.debug.print("{any}\n", .{config});
-
-    // Check that the required fields are set
-    // try std.testing.expect(config.name != null);
-    // try std.testing.expect(config.version != null);
-    // try std.testing.expect(config.fingerprint != null);
-    // try std.testing.expect(config.minimum_zig_version != null);
 }

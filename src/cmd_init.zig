@@ -10,12 +10,7 @@ pub fn exec(gpa: Allocator, arena: Allocator, global_opts: GlobalOptions) !void 
     const cwd = try std.fs.cwd().realpathAlloc(gpa, global_opts.project_dir);
     defer gpa.free(cwd);
     const name = try sanitizeExampleName(arena, std.fs.path.basename(cwd));
-    const fingerprint = try std.fmt.allocPrint(
-        gpa,
-        "0x{x}",
-        .{Package.Fingerprint.generate(name).int()},
-    );
-    defer gpa.free(fingerprint);
+    const fingerprint = Package.Fingerprint.generate(name).int();
 
     var paths = [_][]const u8{ "build.zig", "build.zig.zon", "src" };
 
