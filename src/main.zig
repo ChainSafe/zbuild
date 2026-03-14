@@ -5,7 +5,8 @@ const Allocator = std.mem.Allocator;
 const mem = std.mem;
 
 pub const Config = @import("Config.zig");
-pub const ConfigBuildgen = @import("ConfigBuildgen.zig");
+pub const build_runner = @import("build_runner.zig");
+pub const configureBuild = build_runner.configureBuild;
 pub const Args = @import("Args.zig");
 pub const GlobalOptions = @import("GlobalOptions.zig");
 

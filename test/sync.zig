@@ -3,9 +3,6 @@ const Allocator = std.mem.Allocator;
 
 const zbuild = @import("zbuild");
 
-/// set to false to help debug the generated build.zig file
-const remove_build_file = true;
-
 const cwd = "test";
 
 const test_cases = &[_][]const u8{
@@ -17,37 +14,38 @@ const test_cases = &[_][]const u8{
     "fixtures/basic6.build.zig.zon",
 };
 
-fn maybeCleanup(should_cleanup: bool) void {
-    if (should_cleanup) {
-        const dir = std.fs.cwd().openDir(cwd, .{}) catch return;
-        dir.deleteFile("build.zig") catch return;
-        dir.deleteFile("build.zig.zon") catch return;
-    }
+fn cleanup() void {
+    const dir = std.fs.cwd().openDir(cwd, .{}) catch return;
+    dir.deleteFile("build.zig") catch {};
 }
 
-/// - Load the zbuild file
-/// - Generate the build and manifest files
-/// - Run `zig build --help`
-fn testSync(gpa: Allocator, arena: Allocator, should_cleanup: bool, global_opts: zbuild.GlobalOptions) !void {
-    defer maybeCleanup(should_cleanup);
+/// Test that each fixture can be parsed and that sync writes a valid build.zig
+fn testSync(gpa: Allocator, arena: Allocator, global_opts: zbuild.GlobalOptions) !void {
+    defer cleanup();
 
+    // Phase 1: Verify the config parses without error
     const config = try zbuild.Config.parseFromFile(arena, global_opts.zbuild_file, null);
 
-    try zbuild.build.exec(
-        gpa,
-        arena,
-        global_opts,
-        config,
-        .{
-            .kind = .build,
-            .args = &[1][]const u8{"--help"},
-            .stderr_behavior = .Ignore,
-            .stdout_behavior = .Ignore,
-        },
-    );
+    // Phase 2: Run sync to generate build.zig
+    try zbuild.sync.exec(gpa, arena, global_opts, config);
+
+    // Phase 3: Verify build.zig was written with the static template
+    var opened_dir: ?std.fs.Dir = null;
+    defer if (opened_dir) |*d| d.close();
+
+    const dir = if (global_opts.project_dir.len > 0 and !std.mem.eql(u8, global_opts.project_dir, ".")) blk: {
+        opened_dir = try std.fs.cwd().openDir(global_opts.project_dir, .{});
+        break :blk opened_dir.?;
+    } else std.fs.cwd();
+
+    const build_zig = try dir.readFileAlloc(gpa, "build.zig", 4096);
+    defer gpa.free(build_zig);
+
+    // Verify it contains the zbuild import
+    try std.testing.expect(std.mem.indexOf(u8, build_zig, "zbuild.configureBuild") != null);
 }
 
-test "zbuild build --help" {
+test "zbuild sync generates static build.zig" {
     const allocator = std.testing.allocator;
 
     for (test_cases) |test_case| {
@@ -69,6 +67,6 @@ test "zbuild build --help" {
         const global_opts = try zbuild.GlobalOptions.parseArgs(allocator, &args);
         defer global_opts.deinit(allocator);
 
-        try testSync(allocator, arena, remove_build_file, global_opts);
+        try testSync(allocator, arena, global_opts);
     }
 }
