@@ -13,6 +13,8 @@
 const std = @import("std");
 
 pub fn configureBuild(b: *std.Build, comptime manifest: anytype) !void {
+    comptime validateManifest(manifest);
+
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
@@ -50,12 +52,10 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype) !void {
         inline for (@typeInfo(@TypeOf(manifest.modules)).@"struct".fields) |field| {
             const mod = @field(manifest.modules, field.name);
             const m = runner.createModule(mod, field.name);
-            if (@hasField(@TypeOf(mod), "private")) {
-                if (!mod.private) {
-                    b.modules.put(b.dupe(field.name), m) catch @panic("OOM");
-                }
+            const is_private = @hasField(@TypeOf(mod), "private") and mod.private;
+            if (!is_private) {
+                b.modules.put(b.dupe(field.name), m) catch @panic("OOM");
             }
-            try runner.modules.put(field.name, m);
         }
     }
 
@@ -110,6 +110,41 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype) !void {
     runner.wireDependsOn(manifest);
 }
 
+// --- Manifest validation ---
+
+const zbuild_fields = .{
+    "modules",      "executables", "libraries",    "objects",
+    "tests",        "fmts",        "runs",         "options_modules",
+    "dependencies",
+};
+
+const zig_manifest_fields = .{
+    "name",                "version",           "fingerprint",
+    "minimum_zig_version", "paths",             "description",
+    "keywords",
+};
+
+fn validateManifest(comptime manifest: anytype) void {
+    const fields = @typeInfo(@TypeOf(manifest)).@"struct".fields;
+    inline for (fields) |field| {
+        if (!isKnownField(field.name)) {
+            @compileError("unknown field '" ++ field.name ++ "' in build.zig.zon");
+        }
+    }
+}
+
+fn isKnownField(comptime name: []const u8) bool {
+    inline for (zbuild_fields) |f| {
+        if (std.mem.eql(u8, name, f)) return true;
+    }
+    inline for (zig_manifest_fields) |f| {
+        if (std.mem.eql(u8, name, f)) return true;
+    }
+    return false;
+}
+
+// --- BuildRunner ---
+
 const BuildRunner = struct {
     b: *std.Build,
     target: std.Build.ResolvedTarget,
@@ -118,6 +153,8 @@ const BuildRunner = struct {
     dependencies: std.StringHashMap(*std.Build.Dependency),
     options_modules: std.StringHashMap(*std.Build.Module),
     install_steps: std.StringHashMap(*std.Build.Step),
+
+    const Error = error{ OutOfMemory, ModuleNotFound };
 
     // --- Module creation ---
 
@@ -166,7 +203,7 @@ const BuildRunner = struct {
         return m;
     }
 
-    fn resolveModuleLink(self: *BuildRunner, comptime link: anytype, name: []const u8) !*std.Build.Module {
+    fn resolveModuleLink(self: *BuildRunner, comptime link: anytype, name: []const u8) Error!*std.Build.Module {
         const ti = @typeInfo(@TypeOf(link));
         if (ti == .enum_literal) {
             const mod_name = @tagName(link);
@@ -192,7 +229,7 @@ const BuildRunner = struct {
 
     const artifact_passthrough_fields = .{ "max_rss", "use_llvm", "use_lld" };
 
-    fn createExecutable(self: *BuildRunner, comptime name: []const u8, comptime exe: anytype) !void {
+    fn createExecutable(self: *BuildRunner, comptime name: []const u8, comptime exe: anytype) Error!void {
         const Exe = @TypeOf(exe);
         const root_module = try self.resolveModuleLink(exe.root_module, name);
 
@@ -213,7 +250,7 @@ const BuildRunner = struct {
         const artifact = self.b.addExecutable(add_opts);
 
         const install = self.b.addInstallArtifact(artifact, .{
-            .dest_sub_path = if (@hasField(Exe, "dest_sub_path")) @ptrCast(exe.dest_sub_path) else null,
+            .dest_sub_path = if (@hasField(Exe, "dest_sub_path")) exe.dest_sub_path else null,
         });
 
         const tls_install = self.b.step(
@@ -233,7 +270,7 @@ const BuildRunner = struct {
         tls_run.dependOn(&run.step);
     }
 
-    fn createLibrary(self: *BuildRunner, comptime name: []const u8, comptime lib: anytype) !void {
+    fn createLibrary(self: *BuildRunner, comptime name: []const u8, comptime lib: anytype) Error!void {
         const Lib = @TypeOf(lib);
         const root_module = try self.resolveModuleLink(lib.root_module, name);
 
@@ -258,7 +295,7 @@ const BuildRunner = struct {
         }
 
         const install = self.b.addInstallArtifact(artifact, .{
-            .dest_sub_path = if (@hasField(Lib, "dest_sub_path")) @ptrCast(lib.dest_sub_path) else null,
+            .dest_sub_path = if (@hasField(Lib, "dest_sub_path")) lib.dest_sub_path else null,
         });
 
         const tls_install = self.b.step(
@@ -270,7 +307,7 @@ const BuildRunner = struct {
         try self.install_steps.put(name, &install.step);
     }
 
-    fn createObject(self: *BuildRunner, comptime name: []const u8, comptime obj: anytype) !void {
+    fn createObject(self: *BuildRunner, comptime name: []const u8, comptime obj: anytype) Error!void {
         const Obj = @TypeOf(obj);
         const root_module = try self.resolveModuleLink(obj.root_module, name);
 
@@ -297,7 +334,7 @@ const BuildRunner = struct {
         try self.install_steps.put(name, &install.step);
     }
 
-    fn createTest(self: *BuildRunner, comptime name: []const u8, comptime t: anytype, tls_run_test: *std.Build.Step) !void {
+    fn createTest(self: *BuildRunner, comptime name: []const u8, comptime t: anytype, tls_run_test: *std.Build.Step) Error!void {
         const T = @TypeOf(t);
         const root_module = try self.resolveModuleLink(t.root_module, name);
 
@@ -418,18 +455,20 @@ const BuildRunner = struct {
             const default: f64 = if (@hasField(Opt, "default")) opt.default else 0.0;
             const val = opts.step.owner.option(f64, name, desc);
             opts.addOption(f64, name, val orelse default);
+        } else {
+            @compileError("unknown option type '" ++ type_str ++ "'");
         }
     }
 
     // --- Import wiring ---
 
-    fn wireAllImports(self: *BuildRunner, comptime manifest: anytype) !void {
+    fn wireAllImports(self: *BuildRunner, comptime manifest: anytype) Error!void {
         if (@hasField(@TypeOf(manifest), "modules")) {
             inline for (@typeInfo(@TypeOf(manifest.modules)).@"struct".fields) |field| {
                 const mod = @field(manifest.modules, field.name);
                 if (@hasField(@TypeOf(mod), "imports")) {
                     if (self.modules.get(field.name)) |m| {
-                        self.wireModuleImports(m, mod.imports);
+                        try self.wireModuleImports(m, mod.imports);
                     }
                 }
             }
@@ -447,7 +486,7 @@ const BuildRunner = struct {
                             else
                                 field.name;
                             if (self.modules.get(mod_name)) |m| {
-                                self.wireModuleImports(m, item.root_module.imports);
+                                try self.wireModuleImports(m, item.root_module.imports);
                             }
                         }
                     }
@@ -456,10 +495,10 @@ const BuildRunner = struct {
         }
     }
 
-    fn wireModuleImports(self: *BuildRunner, module: *std.Build.Module, comptime imports: anytype) void {
+    fn wireModuleImports(self: *BuildRunner, module: *std.Build.Module, comptime imports: anytype) Error!void {
         inline for (@typeInfo(@TypeOf(imports)).@"struct".fields) |field| {
             const import_name: []const u8 = @field(imports, field.name);
-            const resolved = self.resolveImport(import_name);
+            const resolved = try self.resolveImport(import_name);
             module.addImport(import_name, resolved);
         }
     }
@@ -494,7 +533,7 @@ const BuildRunner = struct {
 
     // --- Resolution helpers (runtime) ---
 
-    fn resolveImport(self: *BuildRunner, import_name: []const u8) *std.Build.Module {
+    fn resolveImport(self: *BuildRunner, import_name: []const u8) Error!*std.Build.Module {
         if (self.modules.get(import_name)) |m| return m;
         if (self.options_modules.get(import_name)) |m| return m;
         var parts = std.mem.splitScalar(u8, import_name, ':');
@@ -503,7 +542,8 @@ const BuildRunner = struct {
             const module_name = if (parts.next()) |rest| rest else first;
             return dep.module(module_name);
         }
-        @panic(self.b.fmt("zbuild: unresolved import '{s}'", .{import_name}));
+        std.log.err("zbuild: unresolved import '{s}'", .{import_name});
+        return error.ModuleNotFound;
     }
 
     fn resolveLazyPath(self: *BuildRunner, path: []const u8) std.Build.LazyPath {
@@ -566,4 +606,77 @@ fn isFloatType(comptime t: []const u8) bool {
     }) |valid| {
         if (std.mem.eql(u8, t, valid)) break true;
     } else false;
+}
+
+// --- Tests ---
+
+test "toStringSlice" {
+    const result = comptime toStringSlice(.{ "hello", "world" });
+    try std.testing.expectEqual(2, result.len);
+    try std.testing.expectEqualStrings("hello", result[0]);
+    try std.testing.expectEqualStrings("world", result[1]);
+}
+
+test "toStringSlice empty" {
+    const result = comptime toStringSlice(.{});
+    try std.testing.expectEqual(0, result.len);
+}
+
+test "toEnumSlice" {
+    const result = comptime toEnumSlice(.{ .debug, .info, .warn });
+    try std.testing.expectEqual(3, result.len);
+    try std.testing.expectEqualStrings("debug", result[0]);
+    try std.testing.expectEqualStrings("info", result[1]);
+    try std.testing.expectEqualStrings("warn", result[2]);
+}
+
+test "isIntType" {
+    try std.testing.expect(comptime isIntType("i32"));
+    try std.testing.expect(comptime isIntType("u64"));
+    try std.testing.expect(comptime isIntType("usize"));
+    try std.testing.expect(comptime isIntType("c_int"));
+    try std.testing.expect(!comptime isIntType("f32"));
+    try std.testing.expect(!comptime isIntType("bool"));
+    try std.testing.expect(!comptime isIntType("string"));
+}
+
+test "isFloatType" {
+    try std.testing.expect(comptime isFloatType("f32"));
+    try std.testing.expect(comptime isFloatType("f64"));
+    try std.testing.expect(comptime isFloatType("c_longdouble"));
+    try std.testing.expect(!comptime isFloatType("i32"));
+    try std.testing.expect(!comptime isFloatType("bool"));
+}
+
+test "isKnownField" {
+    try std.testing.expect(comptime isKnownField("modules"));
+    try std.testing.expect(comptime isKnownField("executables"));
+    try std.testing.expect(comptime isKnownField("name"));
+    try std.testing.expect(comptime isKnownField("dependencies"));
+    try std.testing.expect(!comptime isKnownField("bogus"));
+    try std.testing.expect(!comptime isKnownField(""));
+}
+
+test "validateManifest accepts minimal manifest" {
+    comptime validateManifest(.{
+        .name = .myproject,
+        .version = "0.1.0",
+        .fingerprint = 0x1234,
+        .minimum_zig_version = "0.14.0",
+        .paths = .{"."},
+    });
+}
+
+test "validateManifest accepts zbuild fields" {
+    comptime validateManifest(.{
+        .name = .myproject,
+        .version = "0.1.0",
+        .fingerprint = 0x1234,
+        .minimum_zig_version = "0.14.0",
+        .paths = .{"."},
+        .modules = .{},
+        .executables = .{},
+        .tests = .{},
+        .dependencies = .{},
+    });
 }
