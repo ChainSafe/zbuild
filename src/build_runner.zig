@@ -21,6 +21,7 @@ fn configureWithConfig(b: *std.Build, config: Config) !void {
         .modules = std.StringHashMap(*std.Build.Module).init(b.allocator),
         .dependencies = std.StringHashMap(*std.Build.Dependency).init(b.allocator),
         .options_modules = std.StringHashMap(*std.Build.Module).init(b.allocator),
+        .install_steps = std.StringHashMap(*std.Build.Step).init(b.allocator),
     };
 
     // Phase 1: Create options modules
@@ -112,6 +113,9 @@ fn configureWithConfig(b: *std.Build, config: Config) !void {
 
     // Phase 10: Wire imports for all modules
     try runner.wireAllImports(config);
+
+    // Phase 11: Wire depends_on for artifacts
+    runner.wireDependsOn(config);
 }
 
 const BuildRunner = struct {
@@ -122,6 +126,7 @@ const BuildRunner = struct {
     modules: std.StringHashMap(*std.Build.Module),
     dependencies: std.StringHashMap(*std.Build.Dependency),
     options_modules: std.StringHashMap(*std.Build.Module),
+    install_steps: std.StringHashMap(*std.Build.Step),
 
     fn createModule(self: *BuildRunner, module: Config.Module, name: []const u8) !*std.Build.Module {
         const m = self.b.createModule(.{
@@ -268,6 +273,7 @@ const BuildRunner = struct {
         );
         tls_install.dependOn(&install.step);
         self.b.getInstallStep().dependOn(&install.step);
+        try self.install_steps.put(name, &install.step);
 
         const run = self.b.addRunArtifact(artifact);
         if (self.b.args) |args| run.addArgs(args);
@@ -307,6 +313,7 @@ const BuildRunner = struct {
         );
         tls_install.dependOn(&install.step);
         self.b.getInstallStep().dependOn(&install.step);
+        try self.install_steps.put(name, &install.step);
     }
 
     fn createObject(self: *BuildRunner, name: []const u8, obj: Config.Object) !void {
@@ -328,6 +335,7 @@ const BuildRunner = struct {
         );
         tls_install.dependOn(&install.step);
         self.b.getInstallStep().dependOn(&install.step);
+        try self.install_steps.put(name, &install.step);
     }
 
     fn createTest(self: *BuildRunner, name: []const u8, t: Config.Test, tls_run_test: *std.Build.Step) !void {
@@ -425,6 +433,29 @@ const BuildRunner = struct {
                         const name = t.root_module.module.name orelse continue;
                         const m = self.modules.get(name) orelse continue;
                         self.wireImports(m, imports);
+                    }
+                }
+            }
+        }
+    }
+
+    fn wireDependsOn(self: *BuildRunner, config: Config) void {
+        inline for (.{
+            config.executables,
+            config.libraries,
+            config.objects,
+        }) |maybe_map| {
+            if (maybe_map) |map| {
+                for (map.keys(), map.values()) |name, item| {
+                    if (@field(item, "depends_on")) |deps| {
+                        const this_step = self.install_steps.get(name) orelse continue;
+                        for (deps) |dep_name| {
+                            const dep_step = self.install_steps.get(dep_name) orelse {
+                                std.log.warn("zbuild: depends_on references unknown artifact '{s}'", .{dep_name});
+                                continue;
+                            };
+                            this_step.dependOn(dep_step);
+                        }
                     }
                 }
             }

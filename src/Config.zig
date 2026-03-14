@@ -1910,6 +1910,59 @@ test "serialize round-trip: config with dependencies including hash and lazy" {
     );
 }
 
+test "parse config with depends_on" {
+    const config = try testParse(
+        \\.{
+        \\    .name = .myapp,
+        \\    .version = "1.0.0",
+        \\    .fingerprint = 0xbbbbbbbbbbbbbbbb,
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\    .executables = .{
+        \\        .server = .{
+        \\            .root_module = .{
+        \\                .root_source_file = "src/server.zig",
+        \\            },
+        \\            .depends_on = .{ .proto_lib },
+        \\        },
+        \\    },
+        \\    .libraries = .{
+        \\        .proto_lib = .{
+        \\            .root_module = .{
+        \\                .root_source_file = "src/proto.zig",
+        \\            },
+        \\        },
+        \\    },
+        \\}
+    );
+
+    const exes = config.executables orelse return error.ExpectedExes;
+    const server = exes.get("server") orelse return error.ExpectedServer;
+    const depends_on = server.depends_on orelse return error.ExpectedDependsOn;
+    try std.testing.expectEqual(@as(usize, 1), depends_on.len);
+    try std.testing.expectEqualStrings("proto_lib", depends_on[0]);
+}
+
+test "serialize round-trip: config with depends_on" {
+    try testSerializeRoundTrip(
+        \\.{
+        \\    .name = .myapp,
+        \\    .version = "1.0.0",
+        \\    .fingerprint = 0xbbbbbbbbbbbbbbbb,
+        \\    .minimum_zig_version = "0.14.0",
+        \\    .paths = .{"src"},
+        \\    .executables = .{
+        \\        .server = .{
+        \\            .root_module = .{
+        \\                .root_source_file = "src/server.zig",
+        \\            },
+        \\            .depends_on = .{ .proto_lib },
+        \\        },
+        \\    },
+        \\}
+    );
+}
+
 test "serialize round-trip: config with fmts" {
     try testSerializeRoundTrip(
         \\.{
