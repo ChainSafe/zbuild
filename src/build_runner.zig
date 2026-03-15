@@ -499,19 +499,49 @@ const BuildRunner = struct {
     }
 
     fn createRun(self: *BuildRunner, comptime name: []const u8, comptime cmd: anytype) void {
-        const cmd_str: []const u8 = cmd;
-        var args = std.ArrayList([]const u8).init(self.b.allocator);
-        var it = std.mem.splitScalar(u8, cmd_str, ' ');
-        while (it.next()) |arg| {
-            if (arg.len > 0) args.append(arg) catch @panic("OOM");
+        const is_long_form = @hasField(@TypeOf(cmd), "cmd");
+        const args_tuple = if (is_long_form) cmd.cmd else cmd;
+        const run = self.b.addSystemCommand(comptime toStringSlice(args_tuple));
+
+        // Long form options
+        if (is_long_form) {
+            if (@hasField(@TypeOf(cmd), "cwd"))
+                run.setCwd(self.resolveLazyPath(cmd.cwd));
+
+            if (@hasField(@TypeOf(cmd), "env")) {
+                inline for (@typeInfo(@TypeOf(cmd.env)).@"struct".fields) |field| {
+                    run.setEnvironmentVariable(field.name, @field(cmd.env, field.name));
+                }
+            }
+
+            if (@hasField(@TypeOf(cmd), "inherit_stdio")) {
+                if (cmd.inherit_stdio) run.stdio = .inherit;
+            }
+
+            if (@hasField(@TypeOf(cmd), "stdin"))
+                run.setStdIn(.{ .bytes = cmd.stdin });
+
+            if (@hasField(@TypeOf(cmd), "stdin_file"))
+                run.setStdIn(.{ .lazy_path = self.resolveLazyPath(cmd.stdin_file) });
         }
 
-        const run = self.b.addSystemCommand(args.items);
         const tls = self.b.step(
-            self.b.fmt("run:{s}", .{name}),
+            self.b.fmt("cmd:{s}", .{name}),
             self.b.fmt("Run the {s} command", .{name}),
         );
         tls.dependOn(&run.step);
+
+        // Wire depends_on
+        if (is_long_form and @hasField(@TypeOf(cmd), "depends_on")) {
+            inline for (@typeInfo(@TypeOf(cmd.depends_on)).@"struct".fields) |field| {
+                const dep_name = comptime toComptimeString(@field(cmd.depends_on, field.name));
+                if (self.install_steps.get(dep_name)) |dep_step| {
+                    run.step.dependOn(dep_step);
+                } else {
+                    std.log.warn("zbuild: runs '{s}' depends_on references unknown artifact '{s}'", .{ name, dep_name });
+                }
+            }
+        }
     }
 
     // --- Options modules ---
