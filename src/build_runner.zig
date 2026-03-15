@@ -159,6 +159,22 @@ fn validateManifest(comptime manifest: anytype) void {
             }
         }
     }
+
+    // Validate runs fields
+    if (@hasField(@TypeOf(manifest), "runs")) {
+        inline for (@typeInfo(@TypeOf(manifest.runs)).@"struct".fields) |field| {
+            const run = @field(manifest.runs, field.name);
+            if (@hasField(@TypeOf(run), "cmd")) {
+                // Long form — validate depends_on and stdin/stdin_file exclusion
+                if (@hasField(@TypeOf(run), "depends_on")) {
+                    validateDependsOn(manifest, run.depends_on, "runs", field.name);
+                }
+                if (@hasField(@TypeOf(run), "stdin") and @hasField(@TypeOf(run), "stdin_file")) {
+                    @compileError("runs '" ++ field.name ++ "': stdin and stdin_file are mutually exclusive");
+                }
+            }
+        }
+    }
 }
 
 fn validateRootModuleRef(comptime manifest: anytype, comptime root_module: anytype, comptime section: []const u8, comptime name: []const u8) void {
