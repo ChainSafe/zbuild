@@ -893,3 +893,69 @@ test "validateManifest accepts unknown top-level fields" {
         .some_future_zig_field = "should be ignored",
     });
 }
+
+test "validateManifest accepts short-form runs" {
+    comptime validateManifest(.{
+        .name = .myproject,
+        .version = "0.1.0",
+        .fingerprint = 0x1234,
+        .minimum_zig_version = "0.14.0",
+        .paths = .{"."},
+        .runs = .{
+            .fmt = .{ "zig", "fmt", "src" },
+        },
+    });
+}
+
+test "validateManifest accepts long-form runs" {
+    comptime validateManifest(.{
+        .name = .myproject,
+        .version = "0.1.0",
+        .fingerprint = 0x1234,
+        .minimum_zig_version = "0.14.0",
+        .paths = .{"."},
+        .executables = .{
+            .myapp = .{ .root_module = .{ .root_source_file = "src/main.zig" } },
+        },
+        .runs = .{
+            .deploy = .{
+                .cmd = .{ "./deploy.sh" },
+                .cwd = "scripts",
+                .env = .{ .NODE_ENV = "production" },
+                .depends_on = .{.myapp},
+            },
+        },
+    });
+}
+
+test "validateManifest accepts run and executable with same name" {
+    comptime validateManifest(.{
+        .name = .myproject,
+        .version = "0.1.0",
+        .fingerprint = 0x1234,
+        .minimum_zig_version = "0.14.0",
+        .paths = .{"."},
+        .executables = .{
+            .deploy = .{ .root_module = .{ .root_source_file = "src/main.zig" } },
+        },
+        .runs = .{
+            .deploy = .{ "echo", "deploying" },
+        },
+    });
+}
+
+test "validateManifest accepts runs with unknown fields" {
+    comptime validateManifest(.{
+        .name = .myproject,
+        .version = "0.1.0",
+        .fingerprint = 0x1234,
+        .minimum_zig_version = "0.14.0",
+        .paths = .{"."},
+        .runs = .{
+            .deploy = .{
+                .cmd = .{ "./deploy.sh" },
+                .some_future_field = "ignored",
+            },
+        },
+    });
+}
