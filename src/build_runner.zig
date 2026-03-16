@@ -374,7 +374,7 @@ fn buildHelpText(comptime manifest: anytype) []const u8 {
                 inline for (@typeInfo(@TypeOf(options)).@"struct".fields) |opt_field| {
                     const opt = @field(options, opt_field.name);
                     text = text ++ "  " ++ comptimePad(mod_field.name ++ "." ++ opt_field.name, 22);
-                    text = text ++ opt.type;
+                    text = text ++ toComptimeString(opt.type);
                     if (@hasField(@TypeOf(opt), "default"))
                         text = text ++ " (default: " ++ describeValue(opt.default) ++ ")";
                     if (@hasField(@TypeOf(opt), "description"))
@@ -734,7 +734,7 @@ const BuildRunner = struct {
         _ = self;
         const Opt = @TypeOf(opt);
         const desc: []const u8 = if (@hasField(Opt, "description")) opt.description else "";
-        const type_str = opt.type;
+        const type_str = comptime toComptimeString(opt.type);
 
         if (comptime std.mem.eql(u8, type_str, "bool")) {
             const default: bool = if (@hasField(Opt, "default")) opt.default else false;
@@ -991,7 +991,7 @@ test "isImportable" {
             .core = .{ .root_source_file = "src/core.zig" },
         },
         .options_modules = .{
-            .config = .{ .some_flag = .{ .type = "bool" } },
+            .config = .{ .some_flag = .{ .type = .bool } },
         },
         .dependencies = .{
             .zlib = .{},
@@ -1056,7 +1056,7 @@ test "buildHelpText full manifest" {
         },
         .options_modules = .{
             .config = .{
-                .verbose = .{ .type = "bool", .default = false, .description = "Verbose output" },
+                .verbose = .{ .type = .bool, .default = false, .description = "Verbose output" },
             },
         },
         .dependencies = .{

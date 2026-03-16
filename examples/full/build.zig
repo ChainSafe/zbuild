@@ -76,7 +76,7 @@ pub fn build(b: *std.Build) void {
         .options_modules = .{
             .config = .{
                 .verbose = .{
-                    .type = "bool",
+                    .type = .bool,
                     .default = false,
                     .description = "Enable verbose output",
                 },
