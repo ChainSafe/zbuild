@@ -13,3 +13,4 @@
 pub const build_runner = @import("build_runner.zig");
 pub const configureBuild = build_runner.configureBuild;
 pub const Options = build_runner.Options;
+pub const BuildResult = build_runner.BuildResult;

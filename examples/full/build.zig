@@ -5,7 +5,7 @@ pub fn build(b: *std.Build) void {
     // TODO: @import("build.zig.zon") requires a known result type in Zig 0.14.
     // Investigating whether later Zig versions lift this restriction.
     // For now, the manifest is defined inline.
-    zbuild.configureBuild(b, .{
+    _ = zbuild.configureBuild(b, .{
         .name = .full_example,
         .version = "1.0.0",
         .description = "A comprehensive zbuild example showcasing all features",
@@ -92,6 +92,8 @@ pub fn build(b: *std.Build) void {
         // },
     }, .{
         .help_step = "info", // custom help step name
-    }) catch |err|
+    }) catch |err| {
         std.log.err("zbuild: {}", .{err});
+        return;
+    };
 }

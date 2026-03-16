@@ -5,8 +5,9 @@
 //!     const zbuild = @import("zbuild");
 //!
 //!     pub fn build(b: *std.Build) void {
-//!         zbuild.configureBuild(b, @import("build.zig.zon"), .{}) catch |err| {
+//!         const result = zbuild.configureBuild(b, @import("build.zig.zon"), .{}) catch |err| {
 //!             std.log.err("zbuild: {}", .{err});
+//!             return;
 //!         };
 //!     }
 
@@ -17,7 +18,7 @@ pub const Options = struct {
     help_step: ?[]const u8 = "help",
 };
 
-pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: Options) !void {
+pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: Options) !BuildResult {
     comptime validateManifest(manifest);
 
     const target = b.standardTargetOptions(.{});
@@ -27,9 +28,17 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: 
         .b = b,
         .target = target,
         .optimize = optimize,
-        .modules = std.StringHashMap(*std.Build.Module).init(b.allocator),
-        .dependencies = std.StringHashMap(*std.Build.Dependency).init(b.allocator),
-        .options_modules = std.StringHashMap(*std.Build.Module).init(b.allocator),
+        .result = .{
+            .executables = std.StringHashMap(*std.Build.Step.Compile).init(b.allocator),
+            .libraries = std.StringHashMap(*std.Build.Step.Compile).init(b.allocator),
+            .objects = std.StringHashMap(*std.Build.Step.Compile).init(b.allocator),
+            .tests = std.StringHashMap(*std.Build.Step.Compile).init(b.allocator),
+            .modules = std.StringHashMap(*std.Build.Module).init(b.allocator),
+            .dependencies = std.StringHashMap(*std.Build.Dependency).init(b.allocator),
+            .options_modules = std.StringHashMap(*std.Build.Module).init(b.allocator),
+            .runs = std.StringHashMap(*std.Build.Step.Run).init(b.allocator),
+            .fmts = std.StringHashMap(*std.Build.Step.Fmt).init(b.allocator),
+        },
         .install_steps = std.StringHashMap(*std.Build.Step).init(b.allocator),
     };
 
@@ -41,7 +50,7 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: 
                 b.dependency(field.name, decl.args)
             else
                 b.dependency(field.name, .{});
-            try runner.dependencies.put(field.name, dep);
+            try runner.result.dependencies.put(field.name, dep);
         }
     }
 
@@ -132,6 +141,8 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: 
         const tls = b.step(step_name, "Show project build information");
         tls.dependOn(help);
     }
+
+    return runner.result;
 }
 
 // --- Manifest validation ---
@@ -440,16 +451,56 @@ fn describeValue(comptime val: anytype) []const u8 {
     return "...";
 }
 
+// --- BuildResult ---
+
+pub const BuildResult = struct {
+    executables: std.StringHashMap(*std.Build.Step.Compile),
+    libraries: std.StringHashMap(*std.Build.Step.Compile),
+    objects: std.StringHashMap(*std.Build.Step.Compile),
+    tests: std.StringHashMap(*std.Build.Step.Compile),
+    modules: std.StringHashMap(*std.Build.Module),
+    dependencies: std.StringHashMap(*std.Build.Dependency),
+    options_modules: std.StringHashMap(*std.Build.Module),
+    runs: std.StringHashMap(*std.Build.Step.Run),
+    fmts: std.StringHashMap(*std.Build.Step.Fmt),
+
+    pub fn executable(self: BuildResult, name: []const u8) ?*std.Build.Step.Compile {
+        return self.executables.get(name);
+    }
+    pub fn library(self: BuildResult, name: []const u8) ?*std.Build.Step.Compile {
+        return self.libraries.get(name);
+    }
+    pub fn object(self: BuildResult, name: []const u8) ?*std.Build.Step.Compile {
+        return self.objects.get(name);
+    }
+    pub fn testArtifact(self: BuildResult, name: []const u8) ?*std.Build.Step.Compile {
+        return self.tests.get(name);
+    }
+    pub fn module(self: BuildResult, name: []const u8) ?*std.Build.Module {
+        return self.result.modules.get(name);
+    }
+    pub fn dependency(self: BuildResult, name: []const u8) ?*std.Build.Dependency {
+        return self.result.dependencies.get(name);
+    }
+    pub fn optionsModule(self: BuildResult, name: []const u8) ?*std.Build.Module {
+        return self.result.options_modules.get(name);
+    }
+    pub fn run(self: BuildResult, name: []const u8) ?*std.Build.Step.Run {
+        return self.runs.get(name);
+    }
+    pub fn fmt(self: BuildResult, name: []const u8) ?*std.Build.Step.Fmt {
+        return self.fmts.get(name);
+    }
+};
+
 // --- BuildRunner ---
 
 const BuildRunner = struct {
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-    modules: std.StringHashMap(*std.Build.Module),
-    dependencies: std.StringHashMap(*std.Build.Dependency),
-    options_modules: std.StringHashMap(*std.Build.Module),
-    install_steps: std.StringHashMap(*std.Build.Step),
+    result: BuildResult,
+    install_steps: std.StringHashMap(*std.Build.Step), // internal: depends_on wiring
 
     const Error = error{ OutOfMemory, ModuleNotFound };
 
@@ -489,13 +540,13 @@ const BuildRunner = struct {
                 const lib_spec = comptime toComptimeString(@field(mod.link_libraries, field.name));
                 const dep_name = comptime comptimeBaseName(lib_spec);
                 const artifact_name = comptime comptimeAfterSep(lib_spec);
-                if (self.dependencies.get(dep_name)) |dep| {
+                if (self.result.dependencies.get(dep_name)) |dep| {
                     m.linkLibrary(dep.artifact(artifact_name));
                 }
             }
         }
 
-        self.modules.put(name, m) catch @panic("OOM");
+        self.result.modules.put(name, m) catch @panic("OOM");
         return m;
     }
 
@@ -503,13 +554,13 @@ const BuildRunner = struct {
         const ti = @typeInfo(@TypeOf(link));
         if (ti == .enum_literal) {
             const mod_name = @tagName(link);
-            return self.modules.get(mod_name) orelse {
+            return self.result.modules.get(mod_name) orelse {
                 std.log.err("zbuild: module '{s}' not found", .{mod_name});
                 return error.ModuleNotFound;
             };
         } else if (ti == .pointer) {
             const str: []const u8 = link;
-            return self.modules.get(str) orelse {
+            return self.result.modules.get(str) orelse {
                 std.log.err("zbuild: module '{s}' not found", .{str});
                 return error.ModuleNotFound;
             };
@@ -544,6 +595,7 @@ const BuildRunner = struct {
         if (@hasField(Exe, "win32_manifest")) add_opts.win32_manifest = self.resolveLazyPath(exe.win32_manifest);
 
         const artifact = self.b.addExecutable(add_opts);
+        try self.result.executables.put(name, artifact);
 
         try self.installAndRegister("build-exe", "executable", name, artifact, .{
             .dest_sub_path = if (@hasField(Exe, "dest_sub_path")) exe.dest_sub_path else null,
@@ -577,6 +629,7 @@ const BuildRunner = struct {
         if (@hasField(Lib, "win32_manifest")) add_opts.win32_manifest = self.resolveLazyPath(lib.win32_manifest);
 
         const artifact = self.b.addLibrary(add_opts);
+        try self.result.libraries.put(name, artifact);
 
         if (@hasField(Lib, "linker_allow_shlib_undefined")) {
             artifact.linker_allow_shlib_undefined = lib.linker_allow_shlib_undefined;
@@ -603,6 +656,7 @@ const BuildRunner = struct {
         if (@hasField(Obj, "zig_lib_dir")) add_opts.zig_lib_dir = self.resolveLazyPath(obj.zig_lib_dir);
 
         const artifact = self.b.addObject(add_opts);
+        try self.result.objects.put(name, artifact);
 
         try self.installAndRegister("build-obj", "object", name, artifact, .{});
     }
@@ -630,6 +684,7 @@ const BuildRunner = struct {
         if (@hasField(T, "zig_lib_dir")) add_opts.zig_lib_dir = self.resolveLazyPath(t.zig_lib_dir);
 
         const artifact = self.b.addTest(add_opts);
+        try self.result.tests.put(name, artifact);
 
         const install = self.b.addInstallArtifact(artifact, .{});
         const tls_install = self.b.step(
@@ -654,6 +709,7 @@ const BuildRunner = struct {
             .exclude_paths = if (@hasField(Fmt, "exclude_paths")) comptime toStringSlice(fmt.exclude_paths) else &.{},
             .check = if (@hasField(Fmt, "check")) fmt.check else false,
         });
+        self.result.fmts.put(name, step) catch @panic("OOM");
 
         const tls = self.b.step(
             self.b.fmt("fmt:{s}", .{name}),
@@ -667,6 +723,7 @@ const BuildRunner = struct {
         const is_long_form = @hasField(@TypeOf(cmd), "cmd");
         const args_tuple = if (is_long_form) cmd.cmd else cmd;
         const run = self.b.addSystemCommand(comptime toStringSlice(args_tuple));
+        self.result.runs.put(name, run) catch @panic("OOM");
 
         // Long form options
         if (is_long_form) {
@@ -727,7 +784,7 @@ const BuildRunner = struct {
             self.addOption(opts, field.name, @field(options, field.name));
         }
         const m = opts.createModule();
-        try self.options_modules.put(name, m);
+        try self.result.options_modules.put(name, m);
     }
 
     fn addOption(self: *BuildRunner, opts: *std.Build.Step.Options, comptime name: []const u8, comptime opt: anytype) void {
@@ -780,7 +837,7 @@ const BuildRunner = struct {
             inline for (@typeInfo(@TypeOf(manifest.modules)).@"struct".fields) |field| {
                 const mod = @field(manifest.modules, field.name);
                 if (@hasField(@TypeOf(mod), "imports")) {
-                    if (self.modules.get(field.name)) |m| {
+                    if (self.result.modules.get(field.name)) |m| {
                         try self.wireModuleImports(m, mod.imports);
                     }
                 }
@@ -798,7 +855,7 @@ const BuildRunner = struct {
                                 item.root_module.name
                             else
                                 field.name;
-                            if (self.modules.get(mod_name)) |m| {
+                            if (self.result.modules.get(mod_name)) |m| {
                                 try self.wireModuleImports(m, item.root_module.imports);
                             }
                         }
@@ -847,11 +904,11 @@ const BuildRunner = struct {
     // --- Resolution helpers (runtime) ---
 
     fn resolveImport(self: *BuildRunner, import_name: []const u8) Error!*std.Build.Module {
-        if (self.modules.get(import_name)) |m| return m;
-        if (self.options_modules.get(import_name)) |m| return m;
+        if (self.result.modules.get(import_name)) |m| return m;
+        if (self.result.options_modules.get(import_name)) |m| return m;
         var parts = std.mem.splitScalar(u8, import_name, ':');
         const first = parts.first();
-        if (self.dependencies.get(first)) |dep| {
+        if (self.result.dependencies.get(first)) |dep| {
             const module_name = if (parts.next()) |rest| rest else first;
             return dep.module(module_name);
         }
@@ -862,7 +919,7 @@ const BuildRunner = struct {
     fn resolveLazyPath(self: *BuildRunner, path: []const u8) std.Build.LazyPath {
         var parts = std.mem.splitScalar(u8, path, ':');
         const first = parts.first();
-        if (self.dependencies.get(first)) |dep| {
+        if (self.result.dependencies.get(first)) |dep| {
             const next = parts.next() orelse return dep.namedLazyPath(first);
             if (parts.next()) |last| {
                 return dep.namedWriteFiles(next).getDirectory().path(self.b, last);
