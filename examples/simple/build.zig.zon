@@ -1,0 +1,18 @@
+.{
+    .name = .simple_example,
+    .version = "0.1.0",
+    .fingerprint = 0x24a585649eafbb78,
+    .minimum_zig_version = "0.14.0",
+    .paths = .{ "build.zig", "build.zig.zon", "src" },
+    .description = "A minimal zbuild example",
+    .dependencies = .{
+        .zbuild = .{ .path = "../.." },
+    },
+    .executables = .{
+        .hello = .{
+            .root_module = .{
+                .root_source_file = "src/main.zig",
+            },
+        },
+    },
+}
