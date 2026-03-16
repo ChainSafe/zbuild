@@ -178,3 +178,72 @@ pub fn describeValue(comptime val: anytype) []const u8 {
     if (ti == .comptime_float or ti == .float) return std.fmt.comptimePrint("{d}", .{val});
     return "...";
 }
+
+// --- Tests ---
+
+test "buildHelpText minimal" {
+    const text = comptime buildHelpText(.{
+        .name = .myproject,
+        .version = "0.1.0",
+    });
+    try std.testing.expect(std.mem.indexOf(u8, text, "myproject v0.1.0") != null);
+}
+
+test "buildHelpText full manifest" {
+    const text = comptime buildHelpText(.{
+        .name = .myproject,
+        .version = "1.0.0",
+        .description = "A test project",
+        .modules = .{
+            .core = .{ .root_source_file = "src/core.zig" },
+        },
+        .executables = .{
+            .myapp = .{ .root_module = .core },
+        },
+        .tests = .{
+            .unit = .{ .root_module = .core },
+        },
+        .runs = .{
+            .fmt = .{ "zig", "fmt", "src" },
+            .deploy = .{ .cmd = .{ "./deploy.sh", "--prod" } },
+        },
+        .options_modules = .{
+            .config = .{
+                .verbose = .{ .type = .bool, .default = false, .description = "Verbose output" },
+            },
+        },
+        .dependencies = .{
+            .zlib = .{},
+        },
+    });
+    try std.testing.expect(std.mem.indexOf(u8, text, "myproject v1.0.0 — A test project") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Modules:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "core") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "src/core.zig") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Executables:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "module: core") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Tests:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Runs:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "zig fmt src") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "./deploy.sh --prod") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Options:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "config.verbose") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "bool") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "default: false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Verbose output") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Dependencies:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "zlib") != null);
+}
+
+test "comptimePad" {
+    try std.testing.expectEqualStrings("hi    ", comptime comptimePad("hi", 6));
+    try std.testing.expectEqualStrings("toolong ", comptime comptimePad("toolong", 4));
+}
+
+test "describeValue" {
+    try std.testing.expectEqualStrings("true", comptime describeValue(true));
+    try std.testing.expectEqualStrings("false", comptime describeValue(false));
+    try std.testing.expectEqualStrings("hello", comptime describeValue("hello"));
+    try std.testing.expectEqualStrings("info", comptime describeValue(.info));
+    try std.testing.expectEqualStrings("42", comptime describeValue(42));
+}
