@@ -59,7 +59,7 @@ Target: ~120 lines. A user decides whether to adopt zbuild within 30 seconds.
 2. **The pitch** (3-4 sentences): What it is, the key insight (`@import("build.zig.zon")` + comptime), the escape hatch (works alongside manual `build.zig`).
 3. **Before/after:** 25 lines of `build.zig` vs 10 lines of ZON. The money shot.
 4. **Quickstart:** Add zbuild as a dependency, write the 5-line `build.zig`, add fields to `build.zig.zon`, `zig build`. No CLI install — it's just a Zig dependency.
-5. **Feature list:** Bullet points — modules, executables, libraries, tests, fmts, runs, options modules, dependency args, comptime validation, built-in help step.
+5. **Feature list:** Bullet points — modules, executables, libraries, tests, fmts, runs, options modules, dependency args, comptime validation, built-in help step (reads `name`, `version`, `description` from standard ZON metadata).
 6. **Links:** `docs/schema.md` for full reference, `examples/` for working projects.
 7. **Requirements:** Zig 0.14+
 8. **License:** MIT
@@ -78,15 +78,15 @@ Target: ~300 lines. The complete reference. An experienced dev looks up any fiel
 
 2. **Section-by-section reference** with field tables per manifest section:
 
-   **`modules`** — `root_source_file`, `target`, `optimize`, `imports`, `link_libraries`, `include_paths`, `private`, all passthrough fields (`link_libc`, `link_libcpp`, `single_threaded`, `strip`, `unwind_tables`, `dwarf_format`, `code_model`, `error_tracing`, `omit_frame_pointer`, `pic`, `red_zone`, `sanitize_c`, `sanitize_thread`, `stack_check`, `stack_protector`, `fuzz`, `valgrind`). Root module link syntax (enum literal, string, inline struct). Colon syntax for `link_libraries`.
+   **`modules`** — `root_source_file`, `target` (string: `"native"` or arch-os-abi triple like `"x86_64-linux-gnu"`), `optimize` (enum literal: `.Debug`, `.ReleaseSafe`, `.ReleaseFast`, `.ReleaseSmall`), `imports`, `link_libraries`, `include_paths`, `private`, all passthrough fields (`link_libc`, `link_libcpp`, `single_threaded`, `strip`, `unwind_tables`, `dwarf_format`, `code_model`, `error_tracing`, `omit_frame_pointer`, `pic`, `red_zone`, `sanitize_c`, `sanitize_thread`, `stack_check`, `stack_protector`, `fuzz`, `valgrind`). Root module link syntax (enum literal, string, inline struct with optional `name` override). `link_libraries` colon syntax: `"dep_name:artifact_name"` (resolves a library artifact from a dependency; distinct from LazyPath resolution).
 
-   **`executables`** — `root_module` (three forms), `version`, `linkage`, `dest_sub_path`, `depends_on`, passthrough fields (`max_rss`, `use_llvm`, `use_lld`), `zig_lib_dir`, `win32_manifest`. Steps: `build-exe:<name>`, `run:<name>`.
+   **`executables`** — `root_module` (three forms: enum literal reference, string reference, inline struct with optional `name` override), `version`, `linkage`, `dest_sub_path`, `depends_on`, passthrough fields (`max_rss`, `use_llvm`, `use_lld`), `zig_lib_dir`, `win32_manifest`. Steps: `build-exe:<name>`, `run:<name>`.
 
-   **`libraries`** — Same as executables plus `linker_allow_shlib_undefined`. Steps: `build-lib:<name>`.
+   **`libraries`** — Same as executables plus `linker_allow_shlib_undefined`, `zig_lib_dir`, `win32_manifest`. Steps: `build-lib:<name>`.
 
-   **`objects`** — Simpler subset (no version/linkage/dest_sub_path). Steps: `build-obj:<name>`.
+   **`objects`** — Simpler subset (no version/linkage/dest_sub_path/win32_manifest). Supports `zig_lib_dir` and passthrough fields. Steps: `build-obj:<name>`.
 
-   **`tests`** — `root_module`, `filters`. Steps: `test:<name>`, aggregate `test`. CLI override: `-D<name>.filters=...`.
+   **`tests`** — `root_module`, `filters`, passthrough fields (`max_rss`, `use_llvm`, `use_lld`), `zig_lib_dir`. Steps: `test:<name>`, `build-test:<name>`, aggregate `test`. CLI override: `-D<name>.filters=...`.
 
    **`fmts`** — `paths`, `exclude_paths`, `check`. Steps: `fmt:<name>`, aggregate `fmt`.
 
@@ -96,7 +96,7 @@ Target: ~300 lines. The complete reference. An experienced dev looks up any fiel
 
    **`dependencies`** — `args` field for forwarding comptime dependency args.
 
-3. **LazyPath resolution** — Colon syntax (`dep:path`, `dep:writefile:path`). How `resolveLazyPath` dispatches.
+3. **LazyPath resolution** — Colon syntax for path strings: `"path"` (local), `"dep:path"` (named lazy path from dependency), `"dep:<write_files_name>:<path>"` (file within a dependency's named WriteFiles step). How `resolveLazyPath` dispatches.
 
 4. **Comptime validation** — What gets checked (root_module refs, depends_on refs, import refs, stdin/stdin_file mutual exclusion). What doesn't (unknown fields silently ignored).
 
