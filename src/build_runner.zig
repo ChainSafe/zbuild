@@ -207,8 +207,16 @@ fn validateRootModuleRef(comptime manifest: anytype, comptime root_module: anyty
 fn validateDependsOn(comptime manifest: anytype, comptime deps: anytype, comptime section: []const u8, comptime name: []const u8) void {
     inline for (@typeInfo(@TypeOf(deps)).@"struct".fields) |field| {
         const dep_name = toComptimeString(@field(deps, field.name));
-        if (!hasArtifact(manifest, dep_name)) {
-            @compileError(section ++ " '" ++ name ++ "': depends_on references unknown artifact '" ++ dep_name ++ "'");
+        if (comptime std.mem.indexOfScalar(u8, dep_name, ':') != null) {
+            // Explicit step reference: "prefix:artifact_name"
+            if (!hasStepTarget(manifest, dep_name)) {
+                @compileError(section ++ " '" ++ name ++ "': depends_on references unknown step '" ++ dep_name ++ "'");
+            }
+        } else {
+            // Plain name: references an artifact's install step
+            if (!hasArtifact(manifest, dep_name)) {
+                @compileError(section ++ " '" ++ name ++ "': depends_on references unknown artifact '" ++ dep_name ++ "'");
+            }
         }
     }
 }
@@ -233,6 +241,33 @@ fn hasArtifact(comptime manifest: anytype, comptime name: []const u8) bool {
     inline for (.{ "executables", "libraries", "objects" }) |section| {
         if (@hasField(@TypeOf(manifest), section)) {
             if (@hasField(@TypeOf(@field(manifest, section)), name)) return true;
+        }
+    }
+    return false;
+}
+
+fn hasStepTarget(comptime manifest: anytype, comptime step_ref: []const u8) bool {
+    const prefix = comptimeBaseName(step_ref);
+    const target_name = comptimeAfterSep(step_ref);
+
+    // Map step prefixes to manifest sections
+    const mapping = .{
+        .{ "build-exe", "executables" },
+        .{ "build-lib", "libraries" },
+        .{ "build-obj", "objects" },
+        .{ "build-test", "tests" },
+        .{ "run", "executables" },
+        .{ "test", "tests" },
+        .{ "cmd", "runs" },
+        .{ "fmt", "fmts" },
+    };
+
+    inline for (mapping) |entry| {
+        if (comptime std.mem.eql(u8, prefix, entry[0])) {
+            if (@hasField(@TypeOf(manifest), entry[1])) {
+                if (@hasField(@TypeOf(@field(manifest, entry[1])), target_name)) return true;
+            }
+            return false;
         }
     }
     return false;
@@ -715,11 +750,17 @@ const BuildRunner = struct {
     fn wireDependsOnList(self: *BuildRunner, step: *std.Build.Step, comptime deps: anytype) void {
         inline for (@typeInfo(@TypeOf(deps)).@"struct".fields) |field| {
             const dep_name = comptime toComptimeString(@field(deps, field.name));
-            const dep_step = self.install_steps.get(dep_name) orelse {
-                std.log.warn("zbuild: depends_on references unknown artifact '{s}'", .{dep_name});
-                continue;
-            };
-            step.dependOn(dep_step);
+            const dep_step = if (comptime std.mem.indexOfScalar(u8, dep_name, ':') != null)
+                // Explicit step reference: look up by full step name
+                if (self.b.top_level_steps.get(dep_name)) |tls| &tls.step else null
+            else
+                // Plain name: look up install step
+                self.install_steps.get(dep_name);
+            if (dep_step) |s| {
+                step.dependOn(s);
+            } else {
+                std.log.warn("zbuild: depends_on references unknown step '{s}'", .{dep_name});
+            }
         }
     }
 
@@ -862,6 +903,51 @@ test "hasArtifact" {
     try std.testing.expect(comptime hasArtifact(manifest, "myapp"));
     try std.testing.expect(comptime hasArtifact(manifest, "mylib"));
     try std.testing.expect(!comptime hasArtifact(manifest, "missing"));
+}
+
+test "hasStepTarget" {
+    const manifest = .{
+        .executables = .{ .myapp = .{ .root_module = .{ .root_source_file = "src/main.zig" } } },
+        .tests = .{ .unit = .{ .root_module = .{ .root_source_file = "src/test.zig" } } },
+        .runs = .{ .deploy = .{ "echo", "deploy" } },
+        .fmts = .{ .src = .{ .paths = .{"src"} } },
+    };
+    // Executable steps
+    try std.testing.expect(comptime hasStepTarget(manifest, "build-exe:myapp"));
+    try std.testing.expect(comptime hasStepTarget(manifest, "run:myapp"));
+    try std.testing.expect(!comptime hasStepTarget(manifest, "run:missing"));
+    // Test steps
+    try std.testing.expect(comptime hasStepTarget(manifest, "test:unit"));
+    try std.testing.expect(comptime hasStepTarget(manifest, "build-test:unit"));
+    // Run steps
+    try std.testing.expect(comptime hasStepTarget(manifest, "cmd:deploy"));
+    try std.testing.expect(!comptime hasStepTarget(manifest, "cmd:missing"));
+    // Fmt steps
+    try std.testing.expect(comptime hasStepTarget(manifest, "fmt:src"));
+    // Unknown prefix
+    try std.testing.expect(!comptime hasStepTarget(manifest, "bogus:myapp"));
+}
+
+test "validateManifest accepts step references in depends_on" {
+    comptime validateManifest(.{
+        .name = .myproject,
+        .version = "0.1.0",
+        .fingerprint = 0x1234,
+        .minimum_zig_version = "0.14.0",
+        .paths = .{"."},
+        .executables = .{
+            .myapp = .{ .root_module = .{ .root_source_file = "src/main.zig" } },
+        },
+        .tests = .{
+            .unit = .{ .root_module = .{ .root_source_file = "src/test.zig" } },
+        },
+        .runs = .{
+            .deploy = .{
+                .cmd = .{ "./deploy.sh" },
+                .depends_on = .{ .myapp, "test:unit" },
+            },
+        },
+    });
 }
 
 test "isImportable" {
