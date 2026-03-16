@@ -116,62 +116,40 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype) !void {
 // dependency references, and artifact names become compile errors.
 
 fn validateManifest(comptime manifest: anytype) void {
-    // Validate root_module name references point to declared modules
+    // Validate artifact sections: root_module refs, depends_on, and inline module imports
     inline for (.{ "executables", "libraries", "objects", "tests" }) |section| {
         if (@hasField(@TypeOf(manifest), section)) {
             inline for (@typeInfo(@TypeOf(@field(manifest, section))).@"struct".fields) |field| {
                 const item = @field(@field(manifest, section), field.name);
                 validateRootModuleRef(manifest, item.root_module, section, field.name);
-            }
-        }
-    }
-
-    // Validate depends_on references point to declared artifacts
-    inline for (.{ "executables", "libraries", "objects" }) |section| {
-        if (@hasField(@TypeOf(manifest), section)) {
-            inline for (@typeInfo(@TypeOf(@field(manifest, section))).@"struct".fields) |field| {
-                const item = @field(@field(manifest, section), field.name);
-                if (@hasField(@TypeOf(item), "depends_on")) {
+                if (@hasField(@TypeOf(item), "depends_on"))
                     validateDependsOn(manifest, item.depends_on, section, field.name);
+                if (@typeInfo(@TypeOf(item.root_module)) == .@"struct") {
+                    if (@hasField(@TypeOf(item.root_module), "imports"))
+                        validateImports(manifest, item.root_module.imports, section, field.name);
                 }
             }
         }
     }
 
-    // Validate imports reference declared modules, options_modules, or dependencies
+    // Validate named module imports
     if (@hasField(@TypeOf(manifest), "modules")) {
         inline for (@typeInfo(@TypeOf(manifest.modules)).@"struct".fields) |field| {
             const mod = @field(manifest.modules, field.name);
-            if (@hasField(@TypeOf(mod), "imports")) {
+            if (@hasField(@TypeOf(mod), "imports"))
                 validateImports(manifest, mod.imports, "modules", field.name);
-            }
-        }
-    }
-    inline for (.{ "executables", "libraries", "objects", "tests" }) |section| {
-        if (@hasField(@TypeOf(manifest), section)) {
-            inline for (@typeInfo(@TypeOf(@field(manifest, section))).@"struct".fields) |field| {
-                const item = @field(@field(manifest, section), field.name);
-                if (@typeInfo(@TypeOf(item.root_module)) == .@"struct") {
-                    if (@hasField(@TypeOf(item.root_module), "imports")) {
-                        validateImports(manifest, item.root_module.imports, section, field.name);
-                    }
-                }
-            }
         }
     }
 
-    // Validate runs fields
+    // Validate runs: depends_on refs and stdin/stdin_file exclusion
     if (@hasField(@TypeOf(manifest), "runs")) {
         inline for (@typeInfo(@TypeOf(manifest.runs)).@"struct".fields) |field| {
             const run = @field(manifest.runs, field.name);
             if (@hasField(@TypeOf(run), "cmd")) {
-                // Long form — validate depends_on and stdin/stdin_file exclusion
-                if (@hasField(@TypeOf(run), "depends_on")) {
+                if (@hasField(@TypeOf(run), "depends_on"))
                     validateDependsOn(manifest, run.depends_on, "runs", field.name);
-                }
-                if (@hasField(@TypeOf(run), "stdin") and @hasField(@TypeOf(run), "stdin_file")) {
+                if (@hasField(@TypeOf(run), "stdin") and @hasField(@TypeOf(run), "stdin_file"))
                     @compileError("runs '" ++ field.name ++ "': stdin and stdin_file are mutually exclusive");
-                }
             }
         }
     }
@@ -357,17 +335,9 @@ const BuildRunner = struct {
 
         const artifact = self.b.addExecutable(add_opts);
 
-        const install = self.b.addInstallArtifact(artifact, .{
+        try self.installAndRegister("build-exe", "executable", name, artifact, .{
             .dest_sub_path = if (@hasField(Exe, "dest_sub_path")) exe.dest_sub_path else null,
         });
-
-        const tls_install = self.b.step(
-            self.b.fmt("build-exe:{s}", .{name}),
-            self.b.fmt("Install the {s} executable", .{name}),
-        );
-        tls_install.dependOn(&install.step);
-        self.b.getInstallStep().dependOn(&install.step);
-        try self.install_steps.put(name, &install.step);
 
         const run = self.b.addRunArtifact(artifact);
         if (self.b.args) |args| run.addArgs(args);
@@ -402,17 +372,9 @@ const BuildRunner = struct {
             artifact.linker_allow_shlib_undefined = lib.linker_allow_shlib_undefined;
         }
 
-        const install = self.b.addInstallArtifact(artifact, .{
+        try self.installAndRegister("build-lib", "library", name, artifact, .{
             .dest_sub_path = if (@hasField(Lib, "dest_sub_path")) lib.dest_sub_path else null,
         });
-
-        const tls_install = self.b.step(
-            self.b.fmt("build-lib:{s}", .{name}),
-            self.b.fmt("Install the {s} library", .{name}),
-        );
-        tls_install.dependOn(&install.step);
-        self.b.getInstallStep().dependOn(&install.step);
-        try self.install_steps.put(name, &install.step);
     }
 
     fn createObject(self: *BuildRunner, comptime name: []const u8, comptime obj: anytype) Error!void {
@@ -432,14 +394,7 @@ const BuildRunner = struct {
 
         const artifact = self.b.addObject(add_opts);
 
-        const install = self.b.addInstallArtifact(artifact, .{});
-        const tls_install = self.b.step(
-            self.b.fmt("build-obj:{s}", .{name}),
-            self.b.fmt("Install the {s} object", .{name}),
-        );
-        tls_install.dependOn(&install.step);
-        self.b.getInstallStep().dependOn(&install.step);
-        try self.install_steps.put(name, &install.step);
+        try self.installAndRegister("build-obj", "object", name, artifact, .{});
     }
 
     fn createTest(self: *BuildRunner, comptime name: []const u8, comptime t: anytype, tls_run_test: *std.Build.Step) Error!void {
@@ -542,6 +497,24 @@ const BuildRunner = struct {
                 }
             }
         }
+    }
+
+    fn installAndRegister(
+        self: *BuildRunner,
+        comptime prefix: []const u8,
+        comptime label: []const u8,
+        comptime name: []const u8,
+        artifact: *std.Build.Step.Compile,
+        install_opts: std.Build.Step.InstallArtifact.Options,
+    ) Error!void {
+        const install = self.b.addInstallArtifact(artifact, install_opts);
+        const tls = self.b.step(
+            self.b.fmt(prefix ++ ":{s}", .{name}),
+            self.b.fmt("Install the {s} " ++ label, .{name}),
+        );
+        tls.dependOn(&install.step);
+        self.b.getInstallStep().dependOn(&install.step);
+        try self.install_steps.put(name, &install.step);
     }
 
     // --- Options modules ---
