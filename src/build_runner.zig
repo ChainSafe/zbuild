@@ -487,16 +487,8 @@ const BuildRunner = struct {
         tls.dependOn(&run.step);
 
         // Wire depends_on
-        if (is_long_form and @hasField(@TypeOf(cmd), "depends_on")) {
-            inline for (@typeInfo(@TypeOf(cmd.depends_on)).@"struct".fields) |field| {
-                const dep_name = comptime toComptimeString(@field(cmd.depends_on, field.name));
-                if (self.install_steps.get(dep_name)) |dep_step| {
-                    run.step.dependOn(dep_step);
-                } else {
-                    std.log.warn("zbuild: runs '{s}' depends_on references unknown artifact '{s}'", .{ name, dep_name });
-                }
-            }
-        }
+        if (is_long_form and @hasField(@TypeOf(cmd), "depends_on"))
+            self.wireDependsOnList(&run.step, cmd.depends_on);
     }
 
     fn installAndRegister(
@@ -608,7 +600,7 @@ const BuildRunner = struct {
 
     fn wireModuleImports(self: *BuildRunner, module: *std.Build.Module, comptime imports: anytype) Error!void {
         inline for (@typeInfo(@TypeOf(imports)).@"struct".fields) |field| {
-            const import_name: []const u8 = @field(imports, field.name);
+            const import_name = comptime toComptimeString(@field(imports, field.name));
             const resolved = try self.resolveImport(import_name);
             module.addImport(import_name, resolved);
         }
@@ -633,7 +625,7 @@ const BuildRunner = struct {
 
     fn wireDependsOnList(self: *BuildRunner, step: *std.Build.Step, comptime deps: anytype) void {
         inline for (@typeInfo(@TypeOf(deps)).@"struct".fields) |field| {
-            const dep_name: []const u8 = @field(deps, field.name);
+            const dep_name = comptime toComptimeString(@field(deps, field.name));
             const dep_step = self.install_steps.get(dep_name) orelse {
                 std.log.warn("zbuild: depends_on references unknown artifact '{s}'", .{dep_name});
                 continue;
