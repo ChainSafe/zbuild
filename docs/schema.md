@@ -88,7 +88,7 @@ The `root_module` field accepts three forms:
 | `version` | string | — | Semantic version (e.g. `"1.0.0"`) |
 | `linkage` | enum literal | — | `.static` or `.dynamic` |
 | `dest_sub_path` | string | — | Custom install subdirectory |
-| `depends_on` | tuple | — | Artifacts that must build first |
+| `depends_on` | tuple | — | Steps that must complete first (plain name or `"prefix:name"`) |
 | `max_rss` | int | — | Maximum RSS for the build step |
 | `use_llvm` | bool | — | Use LLVM backend |
 | `use_lld` | bool | — | Use LLD linker |
@@ -212,7 +212,7 @@ Struct with `cmd` plus optional fields:
 | `inherit_stdio` | bool | `false` | Forward stdio to terminal |
 | `stdin` | string | — | Bytes piped to stdin |
 | `stdin_file` | string | — | File piped to stdin (LazyPath resolved) |
-| `depends_on` | tuple | — | Artifacts that must build first |
+| `depends_on` | tuple | — | Steps that must complete first (plain name or `"prefix:name"`) |
 
 `stdin` and `stdin_file` are mutually exclusive.
 
@@ -288,12 +288,14 @@ String paths in fields like `root_source_file`, `cwd`, `zig_lib_dir`, and `inclu
 | `"dep:path"` | Named lazy path from dependency `dep` |
 | `"dep:wf_name:path"` | File `path` within dependency `dep`'s named WriteFiles step `wf_name` |
 
+**Note:** Avoid naming dependencies the same as local directories (e.g., `src`). A path like `"src:file.zig"` would resolve as a dependency reference rather than a local path.
+
 ## Comptime validation
 
 zbuild validates cross-references at compile time. These produce `@compileError` with descriptive messages:
 
 - `root_module` enum/string references must point to a declared module
-- `depends_on` entries must reference a declared artifact (executable, library, or object)
+- `depends_on` entries: plain names (`.mylib`) reference artifact install steps; colon-form strings (`"test:unit"`, `"cmd:deploy"`) reference any named step
 - `imports` entries must reference a module, options_module, or dependency
 - `stdin` and `stdin_file` on the same run are mutually exclusive
 

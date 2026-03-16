@@ -733,6 +733,7 @@ const BuildRunner = struct {
     // --- depends_on wiring ---
 
     fn wireDependsOn(self: *BuildRunner, comptime manifest: anytype) void {
+        // Artifacts: wire install step
         inline for (.{ "executables", "libraries", "objects" }) |section| {
             if (@hasField(@TypeOf(manifest), section)) {
                 inline for (@typeInfo(@TypeOf(@field(manifest, section))).@"struct".fields) |field| {
@@ -741,6 +742,17 @@ const BuildRunner = struct {
                         if (self.install_steps.get(field.name)) |this_step| {
                             self.wireDependsOnList(this_step, item.depends_on);
                         }
+                    }
+                }
+            }
+        }
+        // Tests: wire test run step
+        if (@hasField(@TypeOf(manifest), "tests")) {
+            inline for (@typeInfo(@TypeOf(manifest.tests)).@"struct".fields) |field| {
+                const item = @field(manifest.tests, field.name);
+                if (@hasField(@TypeOf(item), "depends_on")) {
+                    if (self.b.top_level_steps.get(self.b.fmt("test:{s}", .{field.name}))) |tls| {
+                        self.wireDependsOnList(&tls.step, item.depends_on);
                     }
                 }
             }

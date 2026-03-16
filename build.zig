@@ -1,10 +1,10 @@
 const std = @import("std");
-const main = @import("src/main.zig");
+const build_runner = @import("src/build_runner.zig");
 
 // Re-export the zbuild API so dependents can use @import("zbuild").configureBuild
-pub const configureBuild = main.configureBuild;
-pub const Options = main.Options;
-pub const BuildResult = main.build_runner.BuildResult;
+pub const configureBuild = build_runner.configureBuild;
+pub const Options = build_runner.Options;
+pub const BuildResult = build_runner.BuildResult;
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
