@@ -1,4 +1,9 @@
 const std = @import("std");
+const main = @import("src/main.zig");
+
+// Re-export the zbuild API so dependents can use @import("zbuild").configureBuild
+pub const configureBuild = main.configureBuild;
+pub const Options = main.Options;
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});

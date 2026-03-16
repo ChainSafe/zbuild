@@ -118,7 +118,7 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: 
     if (opts.help_step) |step_name| {
         const help = b.allocator.create(std.Build.Step) catch @panic("OOM");
         const S = struct {
-            fn make(_: *std.Build.Step, _: std.Progress.Node) anyerror!void {
+            fn make(_: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!void {
                 const stdout = std.io.getStdOut().writer();
                 try stdout.writeAll(comptime buildHelpText(manifest));
             }
