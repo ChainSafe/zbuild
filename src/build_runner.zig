@@ -562,7 +562,7 @@ const BuildRunner = struct {
         const Lib = @TypeOf(lib);
         const root_module = try self.resolveModuleLink(lib.root_module, name);
 
-        var add_opts: std.Build.StaticLibraryOptions = .{
+        var add_opts: std.Build.LibraryOptions = .{
             .name = name,
             .root_module = root_module,
             .version = if (@hasField(Lib, "version")) std.SemanticVersion.parse(lib.version) catch null else null,

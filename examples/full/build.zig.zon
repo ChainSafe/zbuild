@@ -1,0 +1,11 @@
+.{
+    .name = .full_example,
+    .version = "1.0.0",
+    .fingerprint = 0x3dc5c2f38908b4dc,
+    .minimum_zig_version = "0.14.0",
+    .paths = .{ "build.zig", "build.zig.zon", "src" },
+    .description = "A comprehensive zbuild example showcasing all features",
+    .dependencies = .{
+        .zbuild = .{ .path = "../.." },
+    },
+}
