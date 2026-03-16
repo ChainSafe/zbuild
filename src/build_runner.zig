@@ -65,10 +65,10 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: 
     if (@hasField(@TypeOf(manifest), "modules")) {
         inline for (@typeInfo(@TypeOf(manifest.modules)).@"struct".fields) |field| {
             const mod = @field(manifest.modules, field.name);
-            const m = runner.createModule(mod, field.name);
+            const m = try runner.createModule(mod, field.name);
             const is_private = @hasField(@TypeOf(mod), "private") and mod.private;
             if (!is_private) {
-                b.modules.put(b.dupe(field.name), m) catch @panic("OOM");
+                try b.modules.put(b.dupe(field.name), m);
             }
         }
     }
@@ -106,14 +106,14 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: 
     if (@hasField(@TypeOf(manifest), "fmts")) {
         const tls_run_fmt = b.step("fmt", "Run all fmts");
         inline for (@typeInfo(@TypeOf(manifest.fmts)).@"struct".fields) |field| {
-            runner.createFmt(field.name, @field(manifest.fmts, field.name), tls_run_fmt);
+            try runner.createFmt(field.name, @field(manifest.fmts, field.name), tls_run_fmt);
         }
     }
 
     // Phase 9: Create runs
     if (@hasField(@TypeOf(manifest), "runs")) {
         inline for (@typeInfo(@TypeOf(manifest.runs)).@"struct".fields) |field| {
-            runner.createRun(field.name, @field(manifest.runs, field.name));
+            try runner.createRun(field.name, @field(manifest.runs, field.name));
         }
     }
 
@@ -125,21 +125,21 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: 
 
     // Phase 12: Add help step
     if (opts.help_step) |step_name| {
-        const help = b.allocator.create(std.Build.Step) catch @panic("OOM");
+        const help_step_impl = try b.allocator.create(std.Build.Step);
         const S = struct {
             fn make(_: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!void {
                 const stdout = std.io.getStdOut().writer();
-                try stdout.writeAll(comptime buildHelpText(manifest));
+                try stdout.writeAll(comptime help.buildHelpText(manifest));
             }
         };
-        help.* = std.Build.Step.init(.{
+        help_step_impl.* = std.Build.Step.init(.{
             .id = .custom,
             .name = "help",
             .owner = b,
             .makeFn = S.make,
         });
         const tls = b.step(step_name, "Show project build information");
-        tls.dependOn(help);
+        tls.dependOn(help_step_impl);
     }
 
     return runner.result;
@@ -264,192 +264,14 @@ fn comptimeAfterSep(comptime name: []const u8) []const u8 {
     return name;
 }
 
-fn toComptimeString(comptime val: anytype) []const u8 {
+pub fn toComptimeString(comptime val: anytype) []const u8 {
     const ti = @typeInfo(@TypeOf(val));
     if (ti == .enum_literal) return @tagName(val);
     if (ti == .pointer) return val;
     @compileError("expected string or enum literal");
 }
 
-// --- Help text generation ---
-
-fn buildHelpText(comptime manifest: anytype) []const u8 {
-    var text: []const u8 = "";
-
-    // Header
-    if (@hasField(@TypeOf(manifest), "name"))
-        text = text ++ @tagName(manifest.name);
-    if (@hasField(@TypeOf(manifest), "version"))
-        text = text ++ " v" ++ manifest.version;
-    if (@hasField(@TypeOf(manifest), "description"))
-        text = text ++ " — " ++ manifest.description;
-    text = text ++ "\n";
-
-    // Modules
-    if (@hasField(@TypeOf(manifest), "modules")) {
-        const fields = @typeInfo(@TypeOf(manifest.modules)).@"struct".fields;
-        if (fields.len > 0) {
-            text = text ++ "\nModules:\n";
-            inline for (fields) |field| {
-                const mod = @field(manifest.modules, field.name);
-                text = text ++ "  " ++ comptimePad(field.name, 22);
-                if (@hasField(@TypeOf(mod), "root_source_file"))
-                    text = text ++ mod.root_source_file;
-                text = text ++ "\n";
-            }
-        }
-    }
-
-    // Executables
-    if (@hasField(@TypeOf(manifest), "executables")) {
-        const fields = @typeInfo(@TypeOf(manifest.executables)).@"struct".fields;
-        if (fields.len > 0) {
-            text = text ++ "\nExecutables:" ++ comptimePad("", 10) ++ "zig build run:<name>\n";
-            inline for (fields) |field| {
-                const exe = @field(manifest.executables, field.name);
-                text = text ++ "  " ++ comptimePad(field.name, 22) ++ describeRootModule(exe.root_module) ++ "\n";
-            }
-        }
-    }
-
-    // Libraries
-    if (@hasField(@TypeOf(manifest), "libraries")) {
-        const fields = @typeInfo(@TypeOf(manifest.libraries)).@"struct".fields;
-        if (fields.len > 0) {
-            text = text ++ "\nLibraries:" ++ comptimePad("", 12) ++ "zig build build-lib:<name>\n";
-            inline for (fields) |field| {
-                const lib = @field(manifest.libraries, field.name);
-                text = text ++ "  " ++ comptimePad(field.name, 22) ++ describeRootModule(lib.root_module) ++ "\n";
-            }
-        }
-    }
-
-    // Objects
-    if (@hasField(@TypeOf(manifest), "objects")) {
-        const fields = @typeInfo(@TypeOf(manifest.objects)).@"struct".fields;
-        if (fields.len > 0) {
-            text = text ++ "\nObjects:" ++ comptimePad("", 14) ++ "zig build build-obj:<name>\n";
-            inline for (fields) |field| {
-                const obj = @field(manifest.objects, field.name);
-                text = text ++ "  " ++ comptimePad(field.name, 22) ++ describeRootModule(obj.root_module) ++ "\n";
-            }
-        }
-    }
-
-    // Tests
-    if (@hasField(@TypeOf(manifest), "tests")) {
-        const fields = @typeInfo(@TypeOf(manifest.tests)).@"struct".fields;
-        if (fields.len > 0) {
-            text = text ++ "\nTests:" ++ comptimePad("", 16) ++ "zig build test:<name> | zig build test\n";
-            inline for (fields) |field| {
-                const t = @field(manifest.tests, field.name);
-                text = text ++ "  " ++ comptimePad(field.name, 22) ++ describeRootModule(t.root_module) ++ "\n";
-            }
-        }
-    }
-
-    // Fmts
-    if (@hasField(@TypeOf(manifest), "fmts")) {
-        const fields = @typeInfo(@TypeOf(manifest.fmts)).@"struct".fields;
-        if (fields.len > 0) {
-            text = text ++ "\nFmts:" ++ comptimePad("", 17) ++ "zig build fmt:<name> | zig build fmt\n";
-            inline for (fields) |field| {
-                const fmt = @field(manifest.fmts, field.name);
-                text = text ++ "  " ++ comptimePad(field.name, 22);
-                if (@hasField(@TypeOf(fmt), "paths"))
-                    text = text ++ "paths: " ++ comptimeJoinTuple(fmt.paths);
-                text = text ++ "\n";
-            }
-        }
-    }
-
-    // Runs
-    if (@hasField(@TypeOf(manifest), "runs")) {
-        const fields = @typeInfo(@TypeOf(manifest.runs)).@"struct".fields;
-        if (fields.len > 0) {
-            text = text ++ "\nRuns:" ++ comptimePad("", 17) ++ "zig build cmd:<name>\n";
-            inline for (fields) |field| {
-                const run = @field(manifest.runs, field.name);
-                text = text ++ "  " ++ comptimePad(field.name, 22) ++ describeRunCmd(run) ++ "\n";
-            }
-        }
-    }
-
-    // Options modules
-    if (@hasField(@TypeOf(manifest), "options_modules")) {
-        const mod_fields = @typeInfo(@TypeOf(manifest.options_modules)).@"struct".fields;
-        if (mod_fields.len > 0) {
-            text = text ++ "\nOptions:" ++ comptimePad("", 14) ++ "-D<name>=<value>\n";
-            inline for (mod_fields) |mod_field| {
-                const options = @field(manifest.options_modules, mod_field.name);
-                inline for (@typeInfo(@TypeOf(options)).@"struct".fields) |opt_field| {
-                    const opt = @field(options, opt_field.name);
-                    text = text ++ "  " ++ comptimePad(mod_field.name ++ "." ++ opt_field.name, 22);
-                    text = text ++ toComptimeString(opt.type);
-                    if (@hasField(@TypeOf(opt), "default"))
-                        text = text ++ " (default: " ++ describeValue(opt.default) ++ ")";
-                    if (@hasField(@TypeOf(opt), "description"))
-                        text = text ++ " — " ++ opt.description;
-                    text = text ++ "\n";
-                }
-            }
-        }
-    }
-
-    // Dependencies
-    if (@hasField(@TypeOf(manifest), "dependencies")) {
-        const fields = @typeInfo(@TypeOf(manifest.dependencies)).@"struct".fields;
-        if (fields.len > 0) {
-            text = text ++ "\nDependencies:\n";
-            inline for (fields) |field| {
-                text = text ++ "  " ++ field.name ++ "\n";
-            }
-        }
-    }
-
-    return text;
-}
-
-fn comptimePad(comptime s: []const u8, comptime width: usize) []const u8 {
-    if (s.len >= width) return s ++ " ";
-    const padding = [1]u8{' '} ** (width - s.len);
-    return s ++ &padding;
-}
-
-fn describeRootModule(comptime root_module: anytype) []const u8 {
-    const ti = @typeInfo(@TypeOf(root_module));
-    if (ti == .enum_literal) return "module: " ++ @tagName(root_module);
-    if (ti == .pointer) return "module: " ++ @as([]const u8, root_module);
-    // Inline module struct
-    if (@hasField(@TypeOf(root_module), "root_source_file"))
-        return root_module.root_source_file;
-    return "(inline module)";
-}
-
-fn describeRunCmd(comptime cmd: anytype) []const u8 {
-    if (@hasField(@TypeOf(cmd), "cmd")) return comptimeJoinTuple(cmd.cmd);
-    return comptimeJoinTuple(cmd);
-}
-
-fn comptimeJoinTuple(comptime tuple: anytype) []const u8 {
-    const fields = @typeInfo(@TypeOf(tuple)).@"struct".fields;
-    var result: []const u8 = "";
-    inline for (fields, 0..) |field, i| {
-        if (i > 0) result = result ++ " ";
-        result = result ++ @field(tuple, field.name);
-    }
-    return result;
-}
-
-fn describeValue(comptime val: anytype) []const u8 {
-    const ti = @typeInfo(@TypeOf(val));
-    if (ti == .enum_literal) return @tagName(val);
-    if (ti == .pointer) return val;
-    if (ti == .bool) return if (val) "true" else "false";
-    if (ti == .comptime_int or ti == .int) return std.fmt.comptimePrint("{d}", .{val});
-    if (ti == .comptime_float or ti == .float) return std.fmt.comptimePrint("{d}", .{val});
-    return "...";
-}
+const help = @import("help.zig");
 
 // --- BuildResult ---
 
@@ -477,13 +299,13 @@ pub const BuildResult = struct {
         return self.tests.get(name);
     }
     pub fn module(self: BuildResult, name: []const u8) ?*std.Build.Module {
-        return self.result.modules.get(name);
+        return self.modules.get(name);
     }
     pub fn dependency(self: BuildResult, name: []const u8) ?*std.Build.Dependency {
-        return self.result.dependencies.get(name);
+        return self.dependencies.get(name);
     }
     pub fn optionsModule(self: BuildResult, name: []const u8) ?*std.Build.Module {
-        return self.result.options_modules.get(name);
+        return self.options_modules.get(name);
     }
     pub fn run(self: BuildResult, name: []const u8) ?*std.Build.Step.Run {
         return self.runs.get(name);
@@ -515,7 +337,7 @@ const BuildRunner = struct {
         "fuzz",            "valgrind",
     };
 
-    fn createModule(self: *BuildRunner, comptime mod: anytype, name: []const u8) *std.Build.Module {
+    fn createModule(self: *BuildRunner, comptime mod: anytype, name: []const u8) Error!*std.Build.Module {
         const Mod = @TypeOf(mod);
         var opts: std.Build.Module.CreateOptions = .{
             .root_source_file = if (@hasField(Mod, "root_source_file")) self.resolveLazyPath(mod.root_source_file) else null,
@@ -546,7 +368,7 @@ const BuildRunner = struct {
             }
         }
 
-        self.result.modules.put(name, m) catch @panic("OOM");
+        try self.result.modules.put(name, m);
         return m;
     }
 
@@ -566,7 +388,7 @@ const BuildRunner = struct {
             };
         } else if (ti == .@"struct") {
             const mod_name: []const u8 = if (@hasField(@TypeOf(link), "name")) link.name else name;
-            return self.createModule(link, mod_name);
+            return try self.createModule(link, mod_name);
         } else {
             @compileError("root_module must be a string, enum literal, or struct");
         }
@@ -702,14 +524,14 @@ const BuildRunner = struct {
         tls_run_test.dependOn(&run.step);
     }
 
-    fn createFmt(self: *BuildRunner, comptime name: []const u8, comptime fmt: anytype, tls_run_fmt: *std.Build.Step) void {
+    fn createFmt(self: *BuildRunner, comptime name: []const u8, comptime fmt: anytype, tls_run_fmt: *std.Build.Step) Error!void {
         const Fmt = @TypeOf(fmt);
         const step = self.b.addFmt(.{
             .paths = if (@hasField(Fmt, "paths")) comptime toStringSlice(fmt.paths) else &.{},
             .exclude_paths = if (@hasField(Fmt, "exclude_paths")) comptime toStringSlice(fmt.exclude_paths) else &.{},
             .check = if (@hasField(Fmt, "check")) fmt.check else false,
         });
-        self.result.fmts.put(name, step) catch @panic("OOM");
+        try self.result.fmts.put(name, step);
 
         const tls = self.b.step(
             self.b.fmt("fmt:{s}", .{name}),
@@ -719,11 +541,11 @@ const BuildRunner = struct {
         tls_run_fmt.dependOn(&step.step);
     }
 
-    fn createRun(self: *BuildRunner, comptime name: []const u8, comptime cmd: anytype) void {
+    fn createRun(self: *BuildRunner, comptime name: []const u8, comptime cmd: anytype) Error!void {
         const is_long_form = @hasField(@TypeOf(cmd), "cmd");
         const args_tuple = if (is_long_form) cmd.cmd else cmd;
         const run = self.b.addSystemCommand(comptime toStringSlice(args_tuple));
-        self.result.runs.put(name, run) catch @panic("OOM");
+        try self.result.runs.put(name, run);
 
         // Long form options
         if (is_long_form) {
@@ -1086,7 +908,7 @@ test "toComptimeString" {
 }
 
 test "buildHelpText minimal" {
-    const text = comptime buildHelpText(.{
+    const text = comptime help.buildHelpText(.{
         .name = .myproject,
         .version = "0.1.0",
     });
@@ -1094,7 +916,7 @@ test "buildHelpText minimal" {
 }
 
 test "buildHelpText full manifest" {
-    const text = comptime buildHelpText(.{
+    const text = comptime help.buildHelpText(.{
         .name = .myproject,
         .version = "1.0.0",
         .description = "A test project",
@@ -1140,16 +962,16 @@ test "buildHelpText full manifest" {
 }
 
 test "comptimePad" {
-    try std.testing.expectEqualStrings("hi    ", comptime comptimePad("hi", 6));
-    try std.testing.expectEqualStrings("toolong ", comptime comptimePad("toolong", 4));
+    try std.testing.expectEqualStrings("hi    ", comptime help.comptimePad("hi", 6));
+    try std.testing.expectEqualStrings("toolong ", comptime help.comptimePad("toolong", 4));
 }
 
 test "describeValue" {
-    try std.testing.expectEqualStrings("true", comptime describeValue(true));
-    try std.testing.expectEqualStrings("false", comptime describeValue(false));
-    try std.testing.expectEqualStrings("hello", comptime describeValue("hello"));
-    try std.testing.expectEqualStrings("info", comptime describeValue(.info));
-    try std.testing.expectEqualStrings("42", comptime describeValue(42));
+    try std.testing.expectEqualStrings("true", comptime help.describeValue(true));
+    try std.testing.expectEqualStrings("false", comptime help.describeValue(false));
+    try std.testing.expectEqualStrings("hello", comptime help.describeValue("hello"));
+    try std.testing.expectEqualStrings("info", comptime help.describeValue(.info));
+    try std.testing.expectEqualStrings("42", comptime help.describeValue(42));
 }
 
 test "validateManifest accepts minimal manifest" {
