@@ -5,14 +5,19 @@
 //!     const zbuild = @import("zbuild");
 //!
 //!     pub fn build(b: *std.Build) void {
-//!         zbuild.configureBuild(b, @import("build.zig.zon")) catch |err| {
+//!         zbuild.configureBuild(b, @import("build.zig.zon"), .{}) catch |err| {
 //!             std.log.err("zbuild: {}", .{err});
 //!         };
 //!     }
 
 const std = @import("std");
 
-pub fn configureBuild(b: *std.Build, comptime manifest: anytype) !void {
+pub const Options = struct {
+    /// Step name for the help command, or null to disable. Default: "help".
+    help_step: ?[]const u8 = "help",
+};
+
+pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: Options) !void {
     comptime validateManifest(manifest);
 
     const target = b.standardTargetOptions(.{});
@@ -108,6 +113,25 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype) !void {
 
     // Phase 11: Wire depends_on
     runner.wireDependsOn(manifest);
+
+    // Phase 12: Add help step
+    if (opts.help_step) |step_name| {
+        const help = b.allocator.create(std.Build.Step) catch @panic("OOM");
+        const S = struct {
+            fn make(_: *std.Build.Step, _: std.Progress.Node) anyerror!void {
+                const stdout = std.io.getStdOut().writer();
+                try stdout.writeAll(comptime buildHelpText(manifest));
+            }
+        };
+        help.* = std.Build.Step.init(.{
+            .id = .custom,
+            .name = "help",
+            .owner = b,
+            .makeFn = S.make,
+        });
+        const tls = b.step(step_name, "Show project build information");
+        tls.dependOn(help);
+    }
 }
 
 // --- Manifest validation ---
@@ -234,6 +258,186 @@ fn toComptimeString(comptime val: anytype) []const u8 {
     if (ti == .enum_literal) return @tagName(val);
     if (ti == .pointer) return val;
     @compileError("expected string or enum literal");
+}
+
+// --- Help text generation ---
+
+fn buildHelpText(comptime manifest: anytype) []const u8 {
+    var text: []const u8 = "";
+
+    // Header
+    if (@hasField(@TypeOf(manifest), "name"))
+        text = text ++ @tagName(manifest.name);
+    if (@hasField(@TypeOf(manifest), "version"))
+        text = text ++ " v" ++ manifest.version;
+    if (@hasField(@TypeOf(manifest), "description"))
+        text = text ++ " — " ++ manifest.description;
+    text = text ++ "\n";
+
+    // Modules
+    if (@hasField(@TypeOf(manifest), "modules")) {
+        const fields = @typeInfo(@TypeOf(manifest.modules)).@"struct".fields;
+        if (fields.len > 0) {
+            text = text ++ "\nModules:\n";
+            inline for (fields) |field| {
+                const mod = @field(manifest.modules, field.name);
+                text = text ++ "  " ++ comptimePad(field.name, 22);
+                if (@hasField(@TypeOf(mod), "root_source_file"))
+                    text = text ++ mod.root_source_file;
+                text = text ++ "\n";
+            }
+        }
+    }
+
+    // Executables
+    if (@hasField(@TypeOf(manifest), "executables")) {
+        const fields = @typeInfo(@TypeOf(manifest.executables)).@"struct".fields;
+        if (fields.len > 0) {
+            text = text ++ "\nExecutables:" ++ comptimePad("", 10) ++ "zig build run:<name>\n";
+            inline for (fields) |field| {
+                const exe = @field(manifest.executables, field.name);
+                text = text ++ "  " ++ comptimePad(field.name, 22) ++ describeRootModule(exe.root_module) ++ "\n";
+            }
+        }
+    }
+
+    // Libraries
+    if (@hasField(@TypeOf(manifest), "libraries")) {
+        const fields = @typeInfo(@TypeOf(manifest.libraries)).@"struct".fields;
+        if (fields.len > 0) {
+            text = text ++ "\nLibraries:" ++ comptimePad("", 12) ++ "zig build build-lib:<name>\n";
+            inline for (fields) |field| {
+                const lib = @field(manifest.libraries, field.name);
+                text = text ++ "  " ++ comptimePad(field.name, 22) ++ describeRootModule(lib.root_module) ++ "\n";
+            }
+        }
+    }
+
+    // Objects
+    if (@hasField(@TypeOf(manifest), "objects")) {
+        const fields = @typeInfo(@TypeOf(manifest.objects)).@"struct".fields;
+        if (fields.len > 0) {
+            text = text ++ "\nObjects:" ++ comptimePad("", 14) ++ "zig build build-obj:<name>\n";
+            inline for (fields) |field| {
+                const obj = @field(manifest.objects, field.name);
+                text = text ++ "  " ++ comptimePad(field.name, 22) ++ describeRootModule(obj.root_module) ++ "\n";
+            }
+        }
+    }
+
+    // Tests
+    if (@hasField(@TypeOf(manifest), "tests")) {
+        const fields = @typeInfo(@TypeOf(manifest.tests)).@"struct".fields;
+        if (fields.len > 0) {
+            text = text ++ "\nTests:" ++ comptimePad("", 16) ++ "zig build test:<name> | zig build test\n";
+            inline for (fields) |field| {
+                const t = @field(manifest.tests, field.name);
+                text = text ++ "  " ++ comptimePad(field.name, 22) ++ describeRootModule(t.root_module) ++ "\n";
+            }
+        }
+    }
+
+    // Fmts
+    if (@hasField(@TypeOf(manifest), "fmts")) {
+        const fields = @typeInfo(@TypeOf(manifest.fmts)).@"struct".fields;
+        if (fields.len > 0) {
+            text = text ++ "\nFmts:" ++ comptimePad("", 17) ++ "zig build fmt:<name> | zig build fmt\n";
+            inline for (fields) |field| {
+                const fmt = @field(manifest.fmts, field.name);
+                text = text ++ "  " ++ comptimePad(field.name, 22);
+                if (@hasField(@TypeOf(fmt), "paths"))
+                    text = text ++ "paths: " ++ comptimeJoinTuple(fmt.paths);
+                text = text ++ "\n";
+            }
+        }
+    }
+
+    // Runs
+    if (@hasField(@TypeOf(manifest), "runs")) {
+        const fields = @typeInfo(@TypeOf(manifest.runs)).@"struct".fields;
+        if (fields.len > 0) {
+            text = text ++ "\nRuns:" ++ comptimePad("", 17) ++ "zig build cmd:<name>\n";
+            inline for (fields) |field| {
+                const run = @field(manifest.runs, field.name);
+                text = text ++ "  " ++ comptimePad(field.name, 22) ++ describeRunCmd(run) ++ "\n";
+            }
+        }
+    }
+
+    // Options modules
+    if (@hasField(@TypeOf(manifest), "options_modules")) {
+        const mod_fields = @typeInfo(@TypeOf(manifest.options_modules)).@"struct".fields;
+        if (mod_fields.len > 0) {
+            text = text ++ "\nOptions:" ++ comptimePad("", 14) ++ "-D<name>=<value>\n";
+            inline for (mod_fields) |mod_field| {
+                const options = @field(manifest.options_modules, mod_field.name);
+                inline for (@typeInfo(@TypeOf(options)).@"struct".fields) |opt_field| {
+                    const opt = @field(options, opt_field.name);
+                    text = text ++ "  " ++ comptimePad(mod_field.name ++ "." ++ opt_field.name, 22);
+                    text = text ++ opt.type;
+                    if (@hasField(@TypeOf(opt), "default"))
+                        text = text ++ " (default: " ++ describeValue(opt.default) ++ ")";
+                    if (@hasField(@TypeOf(opt), "description"))
+                        text = text ++ " — " ++ opt.description;
+                    text = text ++ "\n";
+                }
+            }
+        }
+    }
+
+    // Dependencies
+    if (@hasField(@TypeOf(manifest), "dependencies")) {
+        const fields = @typeInfo(@TypeOf(manifest.dependencies)).@"struct".fields;
+        if (fields.len > 0) {
+            text = text ++ "\nDependencies:\n";
+            inline for (fields) |field| {
+                text = text ++ "  " ++ field.name ++ "\n";
+            }
+        }
+    }
+
+    return text;
+}
+
+fn comptimePad(comptime s: []const u8, comptime width: usize) []const u8 {
+    if (s.len >= width) return s ++ " ";
+    const padding = [1]u8{' '} ** (width - s.len);
+    return s ++ &padding;
+}
+
+fn describeRootModule(comptime root_module: anytype) []const u8 {
+    const ti = @typeInfo(@TypeOf(root_module));
+    if (ti == .enum_literal) return "module: " ++ @tagName(root_module);
+    if (ti == .pointer) return "module: " ++ @as([]const u8, root_module);
+    // Inline module struct
+    if (@hasField(@TypeOf(root_module), "root_source_file"))
+        return root_module.root_source_file;
+    return "(inline module)";
+}
+
+fn describeRunCmd(comptime cmd: anytype) []const u8 {
+    if (@hasField(@TypeOf(cmd), "cmd")) return comptimeJoinTuple(cmd.cmd);
+    return comptimeJoinTuple(cmd);
+}
+
+fn comptimeJoinTuple(comptime tuple: anytype) []const u8 {
+    const fields = @typeInfo(@TypeOf(tuple)).@"struct".fields;
+    var result: []const u8 = "";
+    inline for (fields, 0..) |field, i| {
+        if (i > 0) result = result ++ " ";
+        result = result ++ @field(tuple, field.name);
+    }
+    return result;
+}
+
+fn describeValue(comptime val: anytype) []const u8 {
+    const ti = @typeInfo(@TypeOf(val));
+    if (ti == .enum_literal) return @tagName(val);
+    if (ti == .pointer) return val;
+    if (ti == .bool) return if (val) "true" else "false";
+    if (ti == .comptime_int or ti == .int) return std.fmt.comptimePrint("{d}", .{val});
+    if (ti == .comptime_float or ti == .float) return std.fmt.comptimePrint("{d}", .{val});
+    return "...";
 }
 
 // --- BuildRunner ---
@@ -822,6 +1026,73 @@ test "comptimeAfterSep" {
 test "toComptimeString" {
     try std.testing.expectEqualStrings("hello", comptime toComptimeString("hello"));
     try std.testing.expectEqualStrings("world", comptime toComptimeString(.world));
+}
+
+test "buildHelpText minimal" {
+    const text = comptime buildHelpText(.{
+        .name = .myproject,
+        .version = "0.1.0",
+    });
+    try std.testing.expect(std.mem.indexOf(u8, text, "myproject v0.1.0") != null);
+}
+
+test "buildHelpText full manifest" {
+    const text = comptime buildHelpText(.{
+        .name = .myproject,
+        .version = "1.0.0",
+        .description = "A test project",
+        .modules = .{
+            .core = .{ .root_source_file = "src/core.zig" },
+        },
+        .executables = .{
+            .myapp = .{ .root_module = .core },
+        },
+        .tests = .{
+            .unit = .{ .root_module = .core },
+        },
+        .runs = .{
+            .fmt = .{ "zig", "fmt", "src" },
+            .deploy = .{ .cmd = .{ "./deploy.sh", "--prod" } },
+        },
+        .options_modules = .{
+            .config = .{
+                .verbose = .{ .type = "bool", .default = false, .description = "Verbose output" },
+            },
+        },
+        .dependencies = .{
+            .zlib = .{},
+        },
+    });
+    try std.testing.expect(std.mem.indexOf(u8, text, "myproject v1.0.0 — A test project") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Modules:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "core") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "src/core.zig") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Executables:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "module: core") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Tests:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Runs:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "zig fmt src") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "./deploy.sh --prod") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Options:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "config.verbose") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "bool") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "default: false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Verbose output") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "Dependencies:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "zlib") != null);
+}
+
+test "comptimePad" {
+    try std.testing.expectEqualStrings("hi    ", comptime comptimePad("hi", 6));
+    try std.testing.expectEqualStrings("toolong ", comptime comptimePad("toolong", 4));
+}
+
+test "describeValue" {
+    try std.testing.expectEqualStrings("true", comptime describeValue(true));
+    try std.testing.expectEqualStrings("false", comptime describeValue(false));
+    try std.testing.expectEqualStrings("hello", comptime describeValue("hello"));
+    try std.testing.expectEqualStrings("info", comptime describeValue(.info));
+    try std.testing.expectEqualStrings("42", comptime describeValue(42));
 }
 
 test "validateManifest accepts minimal manifest" {
