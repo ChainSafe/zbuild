@@ -222,6 +222,13 @@ fn comptimeBaseName(comptime name: []const u8) []const u8 {
     return name;
 }
 
+fn comptimeAfterSep(comptime name: []const u8) []const u8 {
+    for (name, 0..) |c, i| {
+        if (c == ':') return name[i + 1 ..];
+    }
+    return name;
+}
+
 fn toComptimeString(comptime val: anytype) []const u8 {
     const ti = @typeInfo(@TypeOf(val));
     if (ti == .enum_literal) return @tagName(val);
@@ -275,10 +282,9 @@ const BuildRunner = struct {
 
         if (@hasField(Mod, "link_libraries")) {
             inline for (@typeInfo(@TypeOf(mod.link_libraries)).@"struct".fields) |field| {
-                const lib_spec: []const u8 = @field(mod.link_libraries, field.name);
-                var parts = std.mem.splitScalar(u8, lib_spec, ':');
-                const dep_name = parts.first();
-                const artifact_name = if (parts.next()) |rest| rest else dep_name;
+                const lib_spec = comptime toComptimeString(@field(mod.link_libraries, field.name));
+                const dep_name = comptime comptimeBaseName(lib_spec);
+                const artifact_name = comptime comptimeAfterSep(lib_spec);
                 if (self.dependencies.get(dep_name)) |dep| {
                     m.linkLibrary(dep.artifact(artifact_name));
                 }
@@ -804,6 +810,13 @@ test "comptimeBaseName" {
     try std.testing.expectEqualStrings("zlib", comptime comptimeBaseName("zlib:zlib"));
     try std.testing.expectEqualStrings("foo", comptime comptimeBaseName("foo:bar:baz"));
     try std.testing.expectEqualStrings("", comptime comptimeBaseName(""));
+}
+
+test "comptimeAfterSep" {
+    try std.testing.expectEqualStrings("zlib", comptime comptimeAfterSep("zlib"));
+    try std.testing.expectEqualStrings("zlib", comptime comptimeAfterSep("dep:zlib"));
+    try std.testing.expectEqualStrings("bar:baz", comptime comptimeAfterSep("foo:bar:baz"));
+    try std.testing.expectEqualStrings("", comptime comptimeAfterSep(""));
 }
 
 test "toComptimeString" {
