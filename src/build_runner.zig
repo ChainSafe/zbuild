@@ -610,9 +610,6 @@ const BuildRunner = struct {
         );
         tls.dependOn(&run.step);
 
-        // Wire depends_on
-        if (is_long_form and @hasField(@TypeOf(cmd), "depends_on"))
-            self.wireDependsOnList(&run.step, cmd.depends_on);
     }
 
     fn installAndRegister(
@@ -746,13 +743,24 @@ const BuildRunner = struct {
                 }
             }
         }
-        // Tests: wire test run step
+        // Tests: wire via test run step
         if (@hasField(@TypeOf(manifest), "tests")) {
             inline for (@typeInfo(@TypeOf(manifest.tests)).@"struct".fields) |field| {
                 const item = @field(manifest.tests, field.name);
                 if (@hasField(@TypeOf(item), "depends_on")) {
                     if (self.b.top_level_steps.get(self.b.fmt("test:{s}", .{field.name}))) |tls| {
                         self.wireDependsOnList(&tls.step, item.depends_on);
+                    }
+                }
+            }
+        }
+        // Runs: wire via cmd step
+        if (@hasField(@TypeOf(manifest), "runs")) {
+            inline for (@typeInfo(@TypeOf(manifest.runs)).@"struct".fields) |field| {
+                const run = @field(manifest.runs, field.name);
+                if (@hasField(@TypeOf(run), "cmd") and @hasField(@TypeOf(run), "depends_on")) {
+                    if (self.b.top_level_steps.get(self.b.fmt("cmd:{s}", .{field.name}))) |tls| {
+                        self.wireDependsOnList(&tls.step, run.depends_on);
                     }
                 }
             }
