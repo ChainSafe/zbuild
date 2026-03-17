@@ -12,7 +12,7 @@ pub fn build(b: *std.Build) void {
 
     // zbuild library module (for use by zbuild-powered projects)
     const zbuild_module = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
+        .root_source_file = b.path("src/build_runner.zig"),
         .target = target,
         .optimize = optimize,
     });
