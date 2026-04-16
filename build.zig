@@ -100,6 +100,12 @@ pub fn build(b: *std.Build) void {
         .stdout_match = "manual test step ok",
     });
     addFixtureCommand(b, tls_test_fixtures, .{
+        .name = "aliases-nested",
+        .cwd = "test/fixtures/aliases_nested",
+        .build_args = &.{"check"},
+        .stderr_match = "alias fixture ok",
+    });
+    addFixtureCommand(b, tls_test_fixtures, .{
         .name = "manual-module-collision",
         .cwd = "test/fixtures/manual_module_collision",
         .expect_exit = 1,
@@ -152,6 +158,12 @@ pub fn build(b: *std.Build) void {
         .cwd = "test/fixtures/duplicate_installable_artifact_name",
         .expect_exit = 2,
         .stderr_match = "installable artifact names must be unique",
+    });
+    addFixtureCommand(b, tls_test_fixtures, .{
+        .name = "alias-empty-depends-on",
+        .cwd = "test/fixtures/alias_empty_depends_on",
+        .expect_exit = 2,
+        .stderr_match = "aliases 'check': depends_on must not be empty",
     });
     addFixtureCommand(b, tls_test_fixtures, .{
         .name = "stdlib-passthrough-library",

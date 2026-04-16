@@ -65,6 +65,7 @@ Once the first executable works, add modules, tests, runs, fmts, options modules
 - `tests` with per-test steps and an aggregate `test` step
 - `fmts` with per-target steps and an aggregate `fmt` step
 - `runs` for arbitrary system commands
+- `aliases` for named aggregate steps such as `check`, `ci`, or `release`
 - `options_modules` that become importable Zig config modules and `-Dmodule.option` CLI flags
 - comptime dependency args forwarded to `b.dependency(...)`
 - a built-in help step (`help` by default, configurable via `Options.help_step`)
@@ -75,7 +76,7 @@ Once the first executable works, add modules, tests, runs, fmts, options modules
 zbuild becomes easy to use once you keep three rules in your head:
 
 1. `build.zig.zon` declares graph nodes.
-   `modules`, `executables`, `libraries`, `tests`, `runs`, and `fmts` each map to a different kind of `std.Build` node or step.
+   `modules`, `executables`, `libraries`, `tests`, `runs`, `fmts`, and `aliases` each map to a different kind of `std.Build` node or step.
 
 2. Ownership is encoded in syntax.
    Enum literals like `.core`, `.config`, and `.myapp` mean "this belongs to the zbuild-owned graph".

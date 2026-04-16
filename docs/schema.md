@@ -242,6 +242,36 @@ Installable artifact names across `executables`, `libraries`, and `objects` must
 
 Manual top-level steps must be created with `b.step(...)` before calling `configureBuild`.
 
+## `aliases`
+
+Named aggregate top-level steps. Aliases do not execute commands or create artifacts; they only group existing steps under a human-facing name such as `check`, `ci`, or `release`.
+
+```zig
+.aliases = .{
+    .check = .{
+        .description = "Run the main verification steps",
+        .depends_on = .{
+            "test",
+            "fmt",
+        },
+    },
+},
+```
+
+Each alias entry creates a top-level step with exactly that name.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `depends_on` | tuple | required | Non-empty list of artifact install-step shorthands or exact top-level step names |
+| `description` | string | `"Run the <name> alias"` | Top-level step description |
+
+`depends_on` uses the same syntax and resolution rules as `runs.depends_on`:
+- **Enum literals:** `.myapp` resolves to the install step for artifact `myapp`
+- **Strings with manifest-owned names:** `"test"`, `"fmt"`, `"run:myapp"`, `"cmd:deploy"`, or another alias name resolve to exact zbuild-owned top-level steps
+- **Other strings:** `"gen:prep"` resolves to a manual top-level step created before `configureBuild`
+
+Alias names live in the top-level step namespace. They must not collide with generated zbuild steps, manual steps registered before `configureBuild`, or installable artifact shorthand names such as `.myapp`.
+
 ## `options_modules`
 
 Configurable build options exposed as importable Zig modules. Users set values via `-D<module>.<option>=<value>`.

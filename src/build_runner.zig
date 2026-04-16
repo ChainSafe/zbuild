@@ -123,11 +123,15 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: 
         }
     }
 
-    // Phase 10: Wire imports
-    try runner.wireAllImports(manifest);
+    // Phase 10: Create aliases
+    if (@hasField(@TypeOf(manifest), "aliases")) {
+        inline for (@typeInfo(@TypeOf(manifest.aliases)).@"struct".fields) |field| {
+            try runner.createAlias(field.name, @field(manifest.aliases, field.name));
+        }
+    }
 
-    // Phase 11: Wire depends_on
-    try runner.wireDependsOn(manifest, opts);
+    // Phase 11: Wire imports
+    try runner.wireAllImports(manifest);
 
     // Phase 12: Add help step
     if (opts.help_step) |step_name| {
@@ -149,6 +153,9 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: 
         });
         tls.dependOn(help_step_impl);
     }
+
+    // Phase 13: Wire depends_on
+    try runner.wireDependsOn(manifest, opts);
 
     return runner.result;
 }
@@ -210,6 +217,13 @@ fn validateManifest(comptime manifest: anytype, comptime opts: Options) void {
                 if (@hasField(@TypeOf(run), "stdin_file"))
                     validateLazyPathSyntax(manifest, run.stdin_file, "runs", field.name, "stdin_file");
             }
+        }
+    }
+
+    if (@hasField(@TypeOf(manifest), "aliases")) {
+        inline for (@typeInfo(@TypeOf(manifest.aliases)).@"struct".fields) |field| {
+            const alias = @field(manifest.aliases, field.name);
+            validateAliasFields(manifest, opts, field.name, alias);
         }
     }
 }
@@ -274,6 +288,41 @@ fn validateRunFields(comptime name: []const u8, comptime run: anytype) void {
             @compileError("runs '" ++ name ++ "': unknown field '" ++ field.name ++ "'");
         }
     }
+}
+
+fn validateAliasFields(comptime manifest: anytype, comptime opts: Options, comptime name: []const u8, comptime alias: anytype) void {
+    const Alias = @TypeOf(alias);
+    const alias_info = @typeInfo(Alias).@"struct";
+    if (alias_info.is_tuple) {
+        @compileError("aliases '" ++ name ++ "': expected a struct with depends_on and optional description");
+    }
+
+    if (!@hasField(Alias, "depends_on")) {
+        @compileError("aliases '" ++ name ++ "': missing required field 'depends_on'");
+    }
+
+    inline for (alias_info.fields) |field| {
+        if (!std.mem.eql(u8, field.name, "depends_on") and
+            !std.mem.eql(u8, field.name, "description"))
+        {
+            @compileError("aliases '" ++ name ++ "': unknown field '" ++ field.name ++ "'");
+        }
+    }
+
+    if (@typeInfo(@TypeOf(alias.depends_on)).@"struct".fields.len == 0) {
+        @compileError("aliases '" ++ name ++ "': depends_on must not be empty");
+    }
+
+    if (@hasField(Alias, "description")) {
+        const description: []const u8 = alias.description;
+        _ = description;
+    }
+
+    if (hasArtifact(manifest, name)) {
+        @compileError("aliases '" ++ name ++ "': alias name collides with artifact shorthand ." ++ name ++ "; choose a different alias name");
+    }
+
+    validateDependsOn(manifest, opts, alias.depends_on, "aliases", name);
 }
 
 fn validateInlineModuleNames(comptime manifest: anytype) void {
@@ -920,50 +969,78 @@ fn hasOptionsModule(comptime manifest: anytype, comptime name: []const u8) bool 
     return false;
 }
 
+fn hasAlias(comptime manifest: anytype, comptime name: []const u8) bool {
+    if (@hasField(@TypeOf(manifest), "aliases")) {
+        if (@hasField(@TypeOf(manifest.aliases), name)) return true;
+    }
+    return false;
+}
+
+fn structHasFieldNamed(comptime T: type, name: []const u8) bool {
+    inline for (@typeInfo(T).@"struct".fields) |field| {
+        if (std.mem.eql(u8, field.name, name)) return true;
+    }
+    return false;
+}
+
 fn isInlineRootModuleType(comptime T: type) bool {
     return @typeInfo(T) == .@"struct";
 }
 
 fn hasStepTarget(comptime manifest: anytype, comptime step_ref: []const u8) bool {
-    if (comptime std.mem.startsWith(u8, step_ref, "build-exe:") or std.mem.startsWith(u8, step_ref, "run:")) {
+    if (comptime std.mem.startsWith(u8, step_ref, "build-exe:")) {
         const target_name = comptimeAfterSep(step_ref);
         if (@hasField(@TypeOf(manifest), "executables")) {
-            return @hasField(@TypeOf(manifest.executables), target_name);
+            return structHasFieldNamed(@TypeOf(manifest.executables), target_name);
+        }
+        return false;
+    }
+    if (comptime std.mem.startsWith(u8, step_ref, "run:")) {
+        const target_name = comptimeAfterSep(step_ref);
+        if (@hasField(@TypeOf(manifest), "executables")) {
+            return structHasFieldNamed(@TypeOf(manifest.executables), target_name);
         }
         return false;
     }
     if (comptime std.mem.startsWith(u8, step_ref, "build-lib:")) {
         const target_name = comptimeAfterSep(step_ref);
         if (@hasField(@TypeOf(manifest), "libraries")) {
-            return @hasField(@TypeOf(manifest.libraries), target_name);
+            return structHasFieldNamed(@TypeOf(manifest.libraries), target_name);
         }
         return false;
     }
     if (comptime std.mem.startsWith(u8, step_ref, "build-obj:")) {
         const target_name = comptimeAfterSep(step_ref);
         if (@hasField(@TypeOf(manifest), "objects")) {
-            return @hasField(@TypeOf(manifest.objects), target_name);
+            return structHasFieldNamed(@TypeOf(manifest.objects), target_name);
         }
         return false;
     }
-    if (comptime std.mem.startsWith(u8, step_ref, "build-test:") or std.mem.startsWith(u8, step_ref, "test:")) {
+    if (comptime std.mem.startsWith(u8, step_ref, "build-test:")) {
         const target_name = comptimeAfterSep(step_ref);
         if (@hasField(@TypeOf(manifest), "tests")) {
-            return @hasField(@TypeOf(manifest.tests), target_name);
+            return structHasFieldNamed(@TypeOf(manifest.tests), target_name);
+        }
+        return false;
+    }
+    if (comptime std.mem.startsWith(u8, step_ref, "test:")) {
+        const target_name = comptimeAfterSep(step_ref);
+        if (@hasField(@TypeOf(manifest), "tests")) {
+            return structHasFieldNamed(@TypeOf(manifest.tests), target_name);
         }
         return false;
     }
     if (comptime std.mem.startsWith(u8, step_ref, "cmd:")) {
         const target_name = comptimeAfterSep(step_ref);
         if (@hasField(@TypeOf(manifest), "runs")) {
-            return @hasField(@TypeOf(manifest.runs), target_name);
+            return structHasFieldNamed(@TypeOf(manifest.runs), target_name);
         }
         return false;
     }
     if (comptime std.mem.startsWith(u8, step_ref, "fmt:")) {
         const target_name = comptimeAfterSep(step_ref);
         if (@hasField(@TypeOf(manifest), "fmts")) {
-            return @hasField(@TypeOf(manifest.fmts), target_name);
+            return structHasFieldNamed(@TypeOf(manifest.fmts), target_name);
         }
         return false;
     }
@@ -992,7 +1069,7 @@ fn isReservedGeneratedStepName(comptime manifest: anytype, comptime opts: Option
 }
 
 fn isManifestStepRef(comptime manifest: anytype, comptime opts: Options, comptime step_ref: []const u8) bool {
-    return hasStepTarget(manifest, step_ref) or isAggregateStepRef(manifest, opts, step_ref);
+    return hasStepTarget(manifest, step_ref) or isAggregateStepRef(manifest, opts, step_ref) or hasAlias(manifest, step_ref);
 }
 
 fn isImportable(comptime manifest: anytype, comptime name: []const u8) bool {
@@ -1249,6 +1326,16 @@ const BuildRunner = struct {
                     &reserved_steps,
                     self.b.fmt("cmd:{s}", .{field.name}),
                     "run command step",
+                ) or failed;
+            }
+        }
+
+        if (@hasField(@TypeOf(manifest), "aliases")) {
+            inline for (@typeInfo(@TypeOf(manifest.aliases)).@"struct".fields) |field| {
+                failed = try self.reserveTopLevelStepName(
+                    &reserved_steps,
+                    field.name,
+                    "alias step",
                 ) or failed;
             }
         }
@@ -1785,6 +1872,15 @@ const BuildRunner = struct {
         tls.dependOn(&run.step);
     }
 
+    fn createAlias(self: *BuildRunner, comptime name: []const u8, comptime alias: anytype) Error!void {
+        const description = if (@hasField(@TypeOf(alias), "description"))
+            alias.description
+        else
+            self.b.fmt("Run the {s} alias", .{name});
+
+        _ = try self.createTopLevelStep(name, description);
+    }
+
     fn installAndRegister(
         self: *BuildRunner,
         comptime prefix: []const u8,
@@ -2140,6 +2236,15 @@ const BuildRunner = struct {
                     if (self.b.top_level_steps.get(self.b.fmt("cmd:{s}", .{field.name}))) |tls| {
                         try self.wireDependsOnList(manifest, opts, &tls.step, run.depends_on);
                     }
+                }
+            }
+        }
+        // Aliases: wire via exact top-level alias step
+        if (@hasField(@TypeOf(manifest), "aliases")) {
+            inline for (@typeInfo(@TypeOf(manifest.aliases)).@"struct".fields) |field| {
+                const alias = @field(manifest.aliases, field.name);
+                if (self.b.top_level_steps.get(field.name)) |tls| {
+                    try self.wireDependsOnList(manifest, opts, &tls.step, alias.depends_on);
                 }
             }
         }

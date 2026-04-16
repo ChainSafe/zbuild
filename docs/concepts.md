@@ -34,6 +34,7 @@ Different sections create different kinds of graph nodes:
 | `tests` | test artifacts plus run/install steps | `test`, `test:unit`, `build-test:unit` |
 | `fmts` | formatting steps | `fmt`, `fmt:src` |
 | `runs` | arbitrary command steps | `cmd:deploy` |
+| `aliases` | named aggregate top-level steps | `check`, `ci`, `release` |
 | `dependencies` | loaded dependency build graphs | default module refs like `.zlib`, submodule refs like `"zlib:zlib"` |
 
 This is the first important idea: zbuild sections are not random manifest blobs. Each section exists because it corresponds to a specific class of `std.Build` node.
@@ -111,6 +112,7 @@ Examples:
 - `run:myapp`
 - `test`
 - `cmd:deploy`
+- `check`
 - `gen:prep`
 
 Strings in `depends_on` target exact step names in this namespace.
@@ -216,6 +218,8 @@ Manifest side:
 .imports = .{"shared"}
 .depends_on = .{"gen:prep"}
 ```
+
+Aliases use that same `depends_on` model, but only create a named grouping step. They do not introduce a command or artifact of their own.
 
 That model stays understandable because the syntax tells you when you are leaving the zbuild-owned world.
 
