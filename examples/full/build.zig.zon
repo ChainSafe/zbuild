@@ -54,6 +54,16 @@
                 .default = false,
                 .description = "Enable verbose output",
             },
+            .log_level = .{
+                .type = .@"enum",
+                .values = .{ .debug, .info, .warn },
+                .default = .info,
+                .description = "Log level",
+            },
+            .output_dir = .{
+                .type = .string,
+                .description = "Optional output directory",
+            },
         },
     },
 }

@@ -230,14 +230,33 @@ Configurable build options exposed as importable Zig modules. Users set values v
         },
         .log_level = .{
             .type = .@"enum",
+            .values = .{ .debug, .info, .warn },
             .default = .info,
             .description = "Log level",
+        },
+        .output_dir = .{
+            .type = .string,
+            .description = "Optional output directory",
         },
     },
 },
 ```
 
-Access in Zig source: `const config = @import("config");` then `config.verbose`, `config.log_level`.
+Access in Zig source:
+
+```zig
+const config = @import("config");
+
+if (config.output_dir) |dir| {
+    _ = dir;
+}
+
+switch (config.log_level) {
+    .debug => {},
+    .info => {},
+    .warn => {},
+}
+```
 
 ### Option fields
 
@@ -245,22 +264,38 @@ Access in Zig source: `const config = @import("config");` then `config.verbose`,
 |-------|------|-------------|
 | `type` | enum literal or string | Required. See supported types below |
 | `default` | varies | Default value (type must match) |
+| `values` | tuple | Required for `.@"enum"` and `.enum_list`; must be non-empty |
+| `type_name` | string | Optional for enum kinds. Defaults to PascalCase of the option name |
 | `description` | string | Shown in `zig build --help` |
 
 ### Supported types
 
 The `type` field accepts either enum literals (`.bool`) or strings (`"bool"`). Enum literals are preferred.
 
-| Type | Zig type | Default type |
-|------|----------|--------------|
-| `.bool` | `bool` | `bool` |
-| `.string` | `[]const u8` | `[]const u8` |
-| `.list` | `[]const []const u8` | tuple of strings |
-| `.@"enum"` | `[]const u8` | enum literal |
-| `.enum_list` | `[]const []const u8` | tuple of enum literals |
-| `.i8` .. `.u64`, `.isize`, `.usize` | corresponding int | int literal |
-| `.c_int`, `.c_uint`, etc. | corresponding C int | int literal |
-| `.f16` .. `.f128`, `.c_longdouble` | corresponding float | float literal |
+If an option has a `default`, the generated field type is `T`. Without a `default`, the generated field type is `?T`.
+
+| Type | Generated Zig type | Default type |
+|------|---------------------|--------------|
+| `.bool` | `bool` / `?bool` | `bool` |
+| `.string` | `[]const u8` / `?[]const u8` | `[]const u8` |
+| `.list` | `[]const []const u8` / `?[]const []const u8` | tuple of strings |
+| `.@"enum"` | `<TypeName>` / `?<TypeName>` | enum literal or string |
+| `.enum_list` | `[]const <TypeName>` / `?[]const <TypeName>` | tuple of enum literals or strings |
+| `.i8` .. `.u64`, `.isize`, `.usize` | corresponding int / optional int | int literal |
+| `.c_int`, `.c_uint`, etc. | corresponding C int / optional C int | int literal |
+| `.f16` .. `.f128`, `.c_longdouble` | corresponding float / optional float | float literal |
+
+Enum kinds generate a public Zig enum type in the imported module:
+
+```zig
+pub const LogLevel = enum {
+    debug,
+    info,
+    warn,
+};
+
+pub const log_level: LogLevel = .info;
+```
 
 ## `dependencies`
 

@@ -178,6 +178,8 @@ fn validateManifest(comptime manifest: anytype) void {
         }
     }
 
+    validateOptionsModules(manifest);
+
     // Validate runs: depends_on refs and stdin/stdin_file exclusion
     if (@hasField(@TypeOf(manifest), "runs")) {
         inline for (@typeInfo(@TypeOf(manifest.runs)).@"struct".fields) |field| {
@@ -229,6 +231,133 @@ fn validateImports(comptime manifest: anytype, comptime imports: anytype, compti
         if (!isImportable(manifest, import_name)) {
             @compileError(section ++ " '" ++ name ++ "': import references unknown target '" ++ import_name ++ "'");
         }
+    }
+}
+
+fn validateOptionsModules(comptime manifest: anytype) void {
+    if (!@hasField(@TypeOf(manifest), "options_modules")) return;
+
+    inline for (@typeInfo(@TypeOf(manifest.options_modules)).@"struct".fields) |module_field| {
+        validateOptionsModule(module_field.name, @field(manifest.options_modules, module_field.name));
+    }
+}
+
+fn validateOptionsModule(comptime module_name: []const u8, comptime options: anytype) void {
+    const fields = @typeInfo(@TypeOf(options)).@"struct".fields;
+
+    inline for (fields) |field| {
+        validateOption(module_name, field.name, @field(options, field.name));
+    }
+
+    inline for (fields) |field| {
+        const opt = @field(options, field.name);
+        if (!comptime isEnumOptionType(optionTypeString(opt))) continue;
+
+        const type_name = comptime resolvedOptionTypeName(field.name, opt);
+        inline for (fields) |other_field| {
+            if (comptime std.mem.eql(u8, type_name, other_field.name)) {
+                @compileError("options_modules '" ++ module_name ++ "': generated type name '" ++ type_name ++ "' collides with option '" ++ other_field.name ++ "'");
+            }
+        }
+    }
+
+    inline for (fields, 0..) |field, i| {
+        const opt = @field(options, field.name);
+        if (!comptime isEnumOptionType(optionTypeString(opt))) continue;
+
+        const type_name = comptime resolvedOptionTypeName(field.name, opt);
+        const values = comptime enumOptionValues(opt);
+        inline for (fields[i + 1 ..]) |other_field| {
+            const other_opt = @field(options, other_field.name);
+            if (!comptime isEnumOptionType(optionTypeString(other_opt))) continue;
+            if (!comptime std.mem.eql(u8, type_name, resolvedOptionTypeName(other_field.name, other_opt))) continue;
+            if (!comptime stringSlicesEql(values, enumOptionValues(other_opt))) {
+                @compileError("options_modules '" ++ module_name ++ "': generated type name '" ++ type_name ++ "' is reused with different enum values");
+            }
+        }
+    }
+}
+
+fn validateOption(comptime module_name: []const u8, comptime option_name: []const u8, comptime opt: anytype) void {
+    const Opt = @TypeOf(opt);
+    if (!@hasField(Opt, "type")) {
+        @compileError("options_modules '" ++ module_name ++ "." ++ option_name ++ "': missing required field 'type'");
+    }
+
+    const type_str = comptime optionTypeString(opt);
+    if (!comptime isSupportedOptionType(type_str)) {
+        @compileError("options_modules '" ++ module_name ++ "." ++ option_name ++ "': unsupported option type '" ++ type_str ++ "'");
+    }
+
+    if (@hasField(Opt, "description")) {
+        const description_check: []const u8 = opt.description;
+        _ = description_check;
+    }
+
+    if (comptime isEnumOptionType(type_str)) {
+        if (!@hasField(Opt, "values")) {
+            @compileError("options_modules '" ++ module_name ++ "." ++ option_name ++ "': enum options require a non-empty 'values' field");
+        }
+        _ = comptime enumOptionValues(opt);
+
+        if (@hasField(Opt, "type_name")) {
+            const type_name: []const u8 = opt.type_name;
+            if (!std.zig.isValidId(type_name) or std.zig.isPrimitive(type_name) or std.zig.isUnderscore(type_name)) {
+                @compileError("options_modules '" ++ module_name ++ "." ++ option_name ++ "': type_name '" ++ type_name ++ "' must be a valid non-primitive Zig identifier");
+            }
+        }
+    } else {
+        if (@hasField(Opt, "values")) {
+            @compileError("options_modules '" ++ module_name ++ "." ++ option_name ++ "': only enum options may declare 'values'");
+        }
+        if (@hasField(Opt, "type_name")) {
+            @compileError("options_modules '" ++ module_name ++ "." ++ option_name ++ "': only enum options may declare 'type_name'");
+        }
+    }
+
+    if (@hasField(Opt, "default")) {
+        validateOptionDefault(module_name, option_name, opt);
+    }
+}
+
+fn validateOptionDefault(comptime module_name: []const u8, comptime option_name: []const u8, comptime opt: anytype) void {
+    const type_str = comptime optionTypeString(opt);
+    if (comptime std.mem.eql(u8, type_str, "bool")) {
+        const default_check: bool = opt.default;
+        _ = default_check;
+    } else if (comptime std.mem.eql(u8, type_str, "string")) {
+        const default_check: []const u8 = opt.default;
+        _ = default_check;
+    } else if (comptime std.mem.eql(u8, type_str, "list")) {
+        _ = comptime toStringSlice(opt.default);
+    } else if (comptime std.mem.eql(u8, type_str, "enum")) {
+        validateEnumChoice(module_name, option_name, toComptimeString(opt.default), enumOptionValues(opt));
+    } else if (comptime std.mem.eql(u8, type_str, "enum_list")) {
+        inline for (comptime toComptimeStringSlice(opt.default)) |value| {
+            validateEnumChoice(module_name, option_name, value, enumOptionValues(opt));
+        }
+    } else if (comptime isIntType(type_str)) {
+        validateNumericDefault(optionValueType(type_str), opt.default);
+    } else if (comptime isFloatType(type_str)) {
+        validateNumericDefault(optionValueType(type_str), opt.default);
+    } else {
+        @compileError("options_modules '" ++ module_name ++ "." ++ option_name ++ "': unsupported option type '" ++ type_str ++ "'");
+    }
+}
+
+fn validateNumericDefault(comptime T: type, comptime value: anytype) void {
+    switch (@typeInfo(@TypeOf(value))) {
+        .int, .comptime_int, .float, .comptime_float => {
+            const default_check: T = value;
+            _ = default_check;
+        },
+        else => @compileError("expected a numeric default value"),
+    }
+}
+
+fn validateEnumChoice(comptime module_name: []const u8, comptime option_name: []const u8, comptime value: []const u8, comptime allowed: []const []const u8) void {
+    if (!comptime stringSliceContains(allowed, value)) {
+        @compileError("options_modules '" ++ module_name ++ "." ++ option_name ++ "': default value '" ++ value ++ "' is not present in 'values'");
     }
 }
 
@@ -634,55 +763,255 @@ const BuildRunner = struct {
     // --- Options modules ---
 
     fn createOptionsModule(self: *BuildRunner, comptime name: []const u8, comptime options: anytype) !void {
-        const opts = self.b.addOptions();
-        inline for (@typeInfo(@TypeOf(options)).@"struct".fields) |field| {
-            self.addOption(opts, field.name, @field(options, field.name));
+        var source: std.ArrayList(u8) = .empty;
+        defer source.deinit(self.b.allocator);
+
+        try source.appendSlice(self.b.allocator, "//! Generated by zbuild.\n\n");
+
+        var emitted_type_names: std.ArrayList([]const u8) = .empty;
+        defer {
+            for (emitted_type_names.items) |type_name| self.b.allocator.free(type_name);
+            emitted_type_names.deinit(self.b.allocator);
         }
-        const m = opts.createModule();
+
+        const fields = @typeInfo(@TypeOf(options)).@"struct".fields;
+        inline for (fields) |field| {
+            const opt = @field(options, field.name);
+            if (!comptime isEnumOptionType(optionTypeString(opt))) continue;
+
+            const type_name = try self.optionTypeNameAlloc(field.name, opt);
+            if (stringSliceContains(emitted_type_names.items, type_name)) {
+                self.b.allocator.free(type_name);
+            } else {
+                try emitted_type_names.append(self.b.allocator, type_name);
+                try emitEnumType(&source, self.b.allocator, type_name, enumOptionValues(opt));
+                try source.appendSlice(self.b.allocator, "\n");
+            }
+        }
+
+        inline for (fields) |field| {
+            try self.emitOptionField(&source, name, field.name, @field(options, field.name));
+        }
+
+        const write_file = self.b.addWriteFiles();
+        const generated = write_file.add(self.b.fmt("zbuild-options-{s}.zig", .{name}), source.items);
+        const m = self.b.createModule(.{
+            .root_source_file = generated,
+        });
         try self.result.options_modules.put(name, m);
     }
 
-    fn addOption(self: *BuildRunner, opts: *std.Build.Step.Options, comptime name: []const u8, comptime opt: anytype) void {
-        _ = self;
+    fn optionTypeNameAlloc(self: *BuildRunner, comptime option_name: []const u8, comptime opt: anytype) ![]const u8 {
+        if (@hasField(@TypeOf(opt), "type_name")) {
+            return self.b.allocator.dupe(u8, opt.type_name);
+        }
+        return pascalCaseAlloc(self.b.allocator, option_name);
+    }
+
+    fn emitOptionField(self: *BuildRunner, out: *std.ArrayList(u8), comptime module_name: []const u8, comptime option_name: []const u8, comptime opt: anytype) !void {
+        const gpa = self.b.allocator;
         const Opt = @TypeOf(opt);
+        const type_str = comptime optionTypeString(opt);
         const desc: []const u8 = if (@hasField(Opt, "description")) opt.description else "";
-        const type_str = comptime toComptimeString(opt.type);
+        const cli_name = comptime module_name ++ "." ++ option_name;
 
         if (comptime std.mem.eql(u8, type_str, "bool")) {
-            const default: bool = if (@hasField(Opt, "default")) opt.default else false;
-            const val = opts.step.owner.option(bool, name, desc);
-            opts.addOption(bool, name, val orelse default);
-        } else if (comptime std.mem.eql(u8, type_str, "string")) {
-            const val = opts.step.owner.option([]const u8, name, desc);
-            if (val orelse if (@hasField(Opt, "default")) @as(?[]const u8, opt.default) else null) |s| {
-                opts.addOption([]const u8, name, s);
+            const value = self.b.option(bool, cli_name, desc);
+            if (@hasField(Opt, "default")) {
+                try out.print(gpa, "pub const {f}: bool = {any};\n", .{
+                    std.zig.fmtId(option_name),
+                    value orelse opt.default,
+                });
+            } else if (value) |resolved| {
+                try out.print(gpa, "pub const {f}: ?bool = {any};\n", .{
+                    std.zig.fmtId(option_name),
+                    resolved,
+                });
+            } else {
+                try out.print(gpa, "pub const {f}: ?bool = null;\n", .{std.zig.fmtId(option_name)});
             }
-        } else if (comptime std.mem.eql(u8, type_str, "list")) {
-            const val = opts.step.owner.option([]const []const u8, name, desc);
-            if (val orelse if (@hasField(Opt, "default")) @as(?[]const []const u8, comptime toStringSlice(opt.default)) else null) |l| {
-                opts.addOption([]const []const u8, name, l);
-            }
-        } else if (comptime std.mem.eql(u8, type_str, "enum")) {
-            const val = opts.step.owner.option([]const u8, name, desc);
-            if (val orelse if (@hasField(Opt, "default")) @as(?[]const u8, @tagName(opt.default)) else null) |e| {
-                opts.addOption([]const u8, name, e);
-            }
-        } else if (comptime std.mem.eql(u8, type_str, "enum_list")) {
-            const val = opts.step.owner.option([]const []const u8, name, desc);
-            if (val orelse if (@hasField(Opt, "default")) @as(?[]const []const u8, comptime toEnumSlice(opt.default)) else null) |e| {
-                opts.addOption([]const []const u8, name, e);
-            }
-        } else if (comptime isIntType(type_str)) {
-            const default: i64 = if (@hasField(Opt, "default")) opt.default else 0;
-            const val = opts.step.owner.option(i64, name, desc);
-            opts.addOption(i64, name, val orelse default);
-        } else if (comptime isFloatType(type_str)) {
-            const default: f64 = if (@hasField(Opt, "default")) opt.default else 0.0;
-            const val = opts.step.owner.option(f64, name, desc);
-            opts.addOption(f64, name, val orelse default);
-        } else {
-            @compileError("unknown option type '" ++ type_str ++ "'");
+            return;
         }
+
+        if (comptime std.mem.eql(u8, type_str, "string")) {
+            const value = self.b.option([]const u8, cli_name, desc);
+            if (value) |resolved| {
+                if (@hasField(Opt, "default")) {
+                    try out.print(gpa, "pub const {f}: []const u8 = \"{f}\";\n", .{
+                        std.zig.fmtId(option_name),
+                        std.zig.fmtString(resolved),
+                    });
+                } else {
+                    try out.print(gpa, "pub const {f}: ?[]const u8 = \"{f}\";\n", .{
+                        std.zig.fmtId(option_name),
+                        std.zig.fmtString(resolved),
+                    });
+                }
+            } else if (@hasField(Opt, "default")) {
+                try out.print(gpa, "pub const {f}: []const u8 = \"{f}\";\n", .{
+                    std.zig.fmtId(option_name),
+                    std.zig.fmtString(opt.default),
+                });
+            } else {
+                try out.print(gpa, "pub const {f}: ?[]const u8 = null;\n", .{std.zig.fmtId(option_name)});
+            }
+            return;
+        }
+
+        if (comptime std.mem.eql(u8, type_str, "list")) {
+            const value = self.b.option([]const []const u8, cli_name, desc);
+            if (value) |resolved| {
+                if (@hasField(Opt, "default")) {
+                    try out.print(gpa, "pub const {f}: []const []const u8 = ", .{std.zig.fmtId(option_name)});
+                } else {
+                    try out.print(gpa, "pub const {f}: ?[]const []const u8 = ", .{std.zig.fmtId(option_name)});
+                }
+                try emitStringListLiteral(out, gpa, resolved);
+                try out.appendSlice(gpa, ";\n");
+            } else if (@hasField(Opt, "default")) {
+                try out.print(gpa, "pub const {f}: []const []const u8 = ", .{std.zig.fmtId(option_name)});
+                try emitStringListLiteral(out, gpa, comptime toStringSlice(opt.default));
+                try out.appendSlice(gpa, ";\n");
+            } else {
+                try out.print(gpa, "pub const {f}: ?[]const []const u8 = null;\n", .{std.zig.fmtId(option_name)});
+            }
+            return;
+        }
+
+        if (comptime std.mem.eql(u8, type_str, "enum")) {
+            const allowed = comptime enumOptionValues(opt);
+            const type_name = try self.optionTypeNameAlloc(option_name, opt);
+            defer gpa.free(type_name);
+            const value = self.b.option([]const u8, cli_name, desc);
+            const resolved = if (value) |candidate|
+                if (self.validateEnumOptionValue(cli_name, candidate, allowed))
+                    @as(?[]const u8, candidate)
+                else if (@hasField(Opt, "default"))
+                    @as(?[]const u8, toComptimeString(opt.default))
+                else
+                    null
+            else if (@hasField(Opt, "default"))
+                @as(?[]const u8, toComptimeString(opt.default))
+            else
+                null;
+
+            if (@hasField(Opt, "default")) {
+                try out.print(gpa, "pub const {f}: {f} = .{f};\n", .{
+                    std.zig.fmtId(option_name),
+                    std.zig.fmtId(type_name),
+                    std.zig.fmtIdFlags(resolved.?, .{ .allow_primitive = true, .allow_underscore = true }),
+                });
+            } else if (resolved) |tag| {
+                try out.print(gpa, "pub const {f}: ?{f} = .{f};\n", .{
+                    std.zig.fmtId(option_name),
+                    std.zig.fmtId(type_name),
+                    std.zig.fmtIdFlags(tag, .{ .allow_primitive = true, .allow_underscore = true }),
+                });
+            } else {
+                try out.print(gpa, "pub const {f}: ?{f} = null;\n", .{
+                    std.zig.fmtId(option_name),
+                    std.zig.fmtId(type_name),
+                });
+            }
+            return;
+        }
+
+        if (comptime std.mem.eql(u8, type_str, "enum_list")) {
+            const allowed = comptime enumOptionValues(opt);
+            const type_name = try self.optionTypeNameAlloc(option_name, opt);
+            defer gpa.free(type_name);
+            const value = self.b.option([]const []const u8, cli_name, desc);
+            const resolved = if (value) |candidates|
+                if (self.validateEnumOptionValues(cli_name, candidates, allowed))
+                    @as(?[]const []const u8, candidates)
+                else if (@hasField(Opt, "default"))
+                    @as(?[]const []const u8, comptime toComptimeStringSlice(opt.default))
+                else
+                    null
+            else if (@hasField(Opt, "default"))
+                @as(?[]const []const u8, comptime toComptimeStringSlice(opt.default))
+            else
+                null;
+
+            if (@hasField(Opt, "default")) {
+                try out.print(gpa, "pub const {f}: []const {f} = ", .{
+                    std.zig.fmtId(option_name),
+                    std.zig.fmtId(type_name),
+                });
+                try emitEnumListLiteral(out, gpa, resolved.?);
+                try out.appendSlice(gpa, ";\n");
+            } else if (resolved) |tags| {
+                try out.print(gpa, "pub const {f}: ?[]const {f} = ", .{
+                    std.zig.fmtId(option_name),
+                    std.zig.fmtId(type_name),
+                });
+                try emitEnumListLiteral(out, gpa, tags);
+                try out.appendSlice(gpa, ";\n");
+            } else {
+                try out.print(gpa, "pub const {f}: ?[]const {f} = null;\n", .{
+                    std.zig.fmtId(option_name),
+                    std.zig.fmtId(type_name),
+                });
+            }
+            return;
+        }
+
+        if (comptime isIntType(type_str) or isFloatType(type_str)) {
+            const T = comptime optionValueType(type_str);
+            const value = self.b.option(T, cli_name, desc);
+            if (@hasField(Opt, "default")) {
+                try out.print(gpa, "pub const {f}: {s} = {any};\n", .{
+                    std.zig.fmtId(option_name),
+                    type_str,
+                    value orelse opt.default,
+                });
+            } else if (value) |resolved| {
+                try out.print(gpa, "pub const {f}: ?{s} = {any};\n", .{
+                    std.zig.fmtId(option_name),
+                    type_str,
+                    resolved,
+                });
+            } else {
+                try out.print(gpa, "pub const {f}: ?{s} = null;\n", .{
+                    std.zig.fmtId(option_name),
+                    type_str,
+                });
+            }
+            return;
+        }
+
+        @compileError("unknown option type '" ++ type_str ++ "'");
+    }
+
+    fn validateEnumOptionValue(self: *BuildRunner, name: []const u8, actual: []const u8, allowed: []const []const u8) bool {
+        if (stringSliceContains(allowed, actual)) return true;
+        self.logInvalidEnumOptionValue(name, actual, allowed);
+        return false;
+    }
+
+    fn validateEnumOptionValues(self: *BuildRunner, name: []const u8, actual: []const []const u8, allowed: []const []const u8) bool {
+        var ok = true;
+        for (actual) |value| {
+            ok = self.validateEnumOptionValue(name, value, allowed) and ok;
+        }
+        return ok;
+    }
+
+    fn logInvalidEnumOptionValue(self: *BuildRunner, name: []const u8, actual: []const u8, allowed: []const []const u8) void {
+        var expected: std.ArrayList(u8) = .empty;
+        defer expected.deinit(self.b.allocator);
+
+        for (allowed, 0..) |value, i| {
+            if (i > 0) expected.appendSlice(self.b.allocator, ", ") catch @panic("OOM");
+            expected.appendSlice(self.b.allocator, value) catch @panic("OOM");
+        }
+
+        std.log.err("invalid value for -D{s}: '{s}' (expected one of: {s})", .{
+            name,
+            actual,
+            expected.items,
+        });
+        self.b.invalid_user_input = true;
     }
 
     // --- Import wiring ---
@@ -833,14 +1162,168 @@ fn toStringSlice(comptime tuple: anytype) []const []const u8 {
     return &final;
 }
 
-fn toEnumSlice(comptime tuple: anytype) []const []const u8 {
+fn toComptimeStringSlice(comptime tuple: anytype) []const []const u8 {
     const fields = @typeInfo(@TypeOf(tuple)).@"struct".fields;
     var result: [fields.len][]const u8 = undefined;
     inline for (fields, 0..) |field, i| {
-        result[i] = @tagName(@field(tuple, field.name));
+        result[i] = toComptimeString(@field(tuple, field.name));
     }
     const final = result;
     return &final;
+}
+
+fn optionTypeString(comptime opt: anytype) []const u8 {
+    return toComptimeString(opt.type);
+}
+
+fn isSupportedOptionType(comptime t: []const u8) bool {
+    return std.mem.eql(u8, t, "bool") or
+        std.mem.eql(u8, t, "string") or
+        std.mem.eql(u8, t, "list") or
+        std.mem.eql(u8, t, "enum") or
+        std.mem.eql(u8, t, "enum_list") or
+        isIntType(t) or
+        isFloatType(t);
+}
+
+fn isEnumOptionType(comptime t: []const u8) bool {
+    return std.mem.eql(u8, t, "enum") or std.mem.eql(u8, t, "enum_list");
+}
+
+fn optionValueType(comptime t: []const u8) type {
+    if (comptime std.mem.eql(u8, t, "bool")) return bool;
+    if (comptime std.mem.eql(u8, t, "string")) return []const u8;
+    if (comptime std.mem.eql(u8, t, "list")) return []const []const u8;
+
+    inline for (.{
+        .{ "i8", i8 },           .{ "u8", u8 },                     .{ "i16", i16 },               .{ "u16", u16 },
+        .{ "i32", i32 },         .{ "u32", u32 },                   .{ "i64", i64 },               .{ "u64", u64 },
+        .{ "i128", i128 },       .{ "u128", u128 },                 .{ "isize", isize },           .{ "usize", usize },
+        .{ "c_short", c_short }, .{ "c_ushort", c_ushort },         .{ "c_int", c_int },           .{ "c_uint", c_uint },
+        .{ "c_long", c_long },   .{ "c_ulong", c_ulong },           .{ "c_longlong", c_longlong }, .{ "c_ulonglong", c_ulonglong },
+        .{ "f16", f16 },         .{ "f32", f32 },                   .{ "f64", f64 },               .{ "f80", f80 },
+        .{ "f128", f128 },       .{ "c_longdouble", c_longdouble },
+    }) |entry| {
+        if (comptime std.mem.eql(u8, t, entry[0])) return entry[1];
+    }
+
+    @compileError("unsupported option type '" ++ t ++ "'");
+}
+
+fn enumOptionValues(comptime opt: anytype) []const []const u8 {
+    const values = comptime toComptimeStringSlice(opt.values);
+    if (values.len == 0) {
+        @compileError("enum options require a non-empty 'values' field");
+    }
+
+    inline for (values, 0..) |value, i| {
+        if (!comptime isValidEnumTagName(value)) {
+            @compileError("invalid enum value '" ++ value ++ "': values must be non-empty Zig-style identifiers");
+        }
+        inline for (values[i + 1 ..]) |other| {
+            if (comptime std.mem.eql(u8, value, other)) {
+                @compileError("duplicate enum value '" ++ value ++ "'");
+            }
+        }
+    }
+    return values;
+}
+
+fn resolvedOptionTypeName(comptime option_name: []const u8, comptime opt: anytype) []const u8 {
+    return if (@hasField(@TypeOf(opt), "type_name"))
+        opt.type_name
+    else
+        comptimePascalCase(option_name);
+}
+
+fn comptimePascalCase(comptime name: []const u8) []const u8 {
+    comptime var result: [name.len]u8 = undefined;
+    comptime var len: usize = 0;
+    comptime var upper = true;
+
+    inline for (name) |c| {
+        if (c == '_') {
+            upper = true;
+            continue;
+        }
+        result[len] = if (upper) std.ascii.toUpper(c) else c;
+        len += 1;
+        upper = false;
+    }
+
+    const final = result[0..len].*;
+    return &final;
+}
+
+fn pascalCaseAlloc(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {
+    var result: std.ArrayList(u8) = .empty;
+    defer result.deinit(allocator);
+
+    var upper = true;
+    for (name) |c| {
+        if (c == '_') {
+            upper = true;
+            continue;
+        }
+        try result.append(allocator, if (upper) std.ascii.toUpper(c) else c);
+        upper = false;
+    }
+
+    return result.toOwnedSlice(allocator);
+}
+
+fn isValidEnumTagName(name: []const u8) bool {
+    if (name.len == 0) return false;
+    if (std.zig.isUnderscore(name)) return false;
+
+    for (name, 0..) |c, i| {
+        switch (c) {
+            '_', 'a'...'z', 'A'...'Z' => {},
+            '0'...'9' => if (i == 0) return false,
+            else => return false,
+        }
+    }
+
+    return true;
+}
+
+fn stringSliceContains(haystack: []const []const u8, needle: []const u8) bool {
+    for (haystack) |value| {
+        if (std.mem.eql(u8, value, needle)) return true;
+    }
+    return false;
+}
+
+fn stringSlicesEql(a: []const []const u8, b: []const []const u8) bool {
+    if (a.len != b.len) return false;
+    for (a, b) |lhs, rhs| {
+        if (!std.mem.eql(u8, lhs, rhs)) return false;
+    }
+    return true;
+}
+
+fn emitEnumType(out: *std.ArrayList(u8), gpa: std.mem.Allocator, type_name: []const u8, values: []const []const u8) !void {
+    try out.print(gpa, "pub const {f} = enum {{\n", .{std.zig.fmtId(type_name)});
+    for (values) |value| {
+        try out.print(gpa, "    {f},\n", .{std.zig.fmtIdFlags(value, .{ .allow_primitive = true, .allow_underscore = true })});
+    }
+    try out.appendSlice(gpa, "};\n");
+}
+
+fn emitStringListLiteral(out: *std.ArrayList(u8), gpa: std.mem.Allocator, values: []const []const u8) !void {
+    try out.appendSlice(gpa, "&.{\n");
+    for (values) |value| {
+        try out.print(gpa, "    \"{f}\",\n", .{std.zig.fmtString(value)});
+    }
+    try out.appendSlice(gpa, "}");
+}
+
+fn emitEnumListLiteral(out: *std.ArrayList(u8), gpa: std.mem.Allocator, values: []const []const u8) !void {
+    try out.appendSlice(gpa, "&.{\n");
+    for (values) |value| {
+        try out.print(gpa, "    .{f},\n", .{std.zig.fmtIdFlags(value, .{ .allow_primitive = true, .allow_underscore = true })});
+    }
+    try out.appendSlice(gpa, "}");
 }
 
 fn isIntType(comptime t: []const u8) bool {
@@ -875,8 +1358,8 @@ test "toStringSlice empty" {
     try std.testing.expectEqual(0, result.len);
 }
 
-test "toEnumSlice" {
-    const result = comptime toEnumSlice(.{ .debug, .info, .warn });
+test "toComptimeStringSlice" {
+    const result = comptime toComptimeStringSlice(.{ .debug, "info", .warn });
     try std.testing.expectEqual(3, result.len);
     try std.testing.expectEqualStrings("debug", result[0]);
     try std.testing.expectEqualStrings("info", result[1]);
@@ -1011,6 +1494,55 @@ test "comptimeAfterSep" {
 test "toComptimeString" {
     try std.testing.expectEqualStrings("hello", comptime toComptimeString("hello"));
     try std.testing.expectEqualStrings("world", comptime toComptimeString(.world));
+}
+
+test "comptimePascalCase" {
+    try std.testing.expectEqualStrings("LogLevel", comptime comptimePascalCase("log_level"));
+    try std.testing.expectEqualStrings("EnabledLevels", comptime comptimePascalCase("enabled_levels"));
+    try std.testing.expectEqualStrings("Http2", comptime comptimePascalCase("http2"));
+}
+
+test "resolvedOptionTypeName" {
+    try std.testing.expectEqualStrings("LogLevel", comptime resolvedOptionTypeName("log_level", .{
+        .type = .@"enum",
+        .values = .{ .debug, .info, .warn },
+    }));
+    try std.testing.expectEqualStrings("Verbosity", comptime resolvedOptionTypeName("log_level", .{
+        .type = .@"enum",
+        .type_name = "Verbosity",
+        .values = .{ .debug, .info, .warn },
+    }));
+}
+
+test "validateManifest accepts typed options modules" {
+    comptime validateManifest(.{
+        .name = .myproject,
+        .version = "0.1.0",
+        .fingerprint = 0x1234,
+        .minimum_zig_version = "0.16.0",
+        .paths = .{"."},
+        .options_modules = .{
+            .config = .{
+                .verbose = .{
+                    .type = .bool,
+                    .default = false,
+                },
+                .log_level = .{
+                    .type = .@"enum",
+                    .values = .{ .debug, .info, .warn },
+                    .default = .info,
+                },
+                .enabled_levels = .{
+                    .type = .enum_list,
+                    .values = .{ .debug, .info, .warn },
+                    .default = .{ .info, .warn },
+                },
+                .output_dir = .{
+                    .type = .string,
+                },
+            },
+        },
+    });
 }
 
 test "validateManifest accepts minimal manifest" {

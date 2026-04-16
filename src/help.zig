@@ -108,7 +108,7 @@ pub fn buildHelpText(comptime manifest: anytype) []const u8 {
     if (@hasField(@TypeOf(manifest), "options_modules")) {
         const mod_fields = @typeInfo(@TypeOf(manifest.options_modules)).@"struct".fields;
         if (mod_fields.len > 0) {
-            text = text ++ "\nOptions:" ++ comptimePad("", 14) ++ "-D<name>=<value>\n";
+            text = text ++ "\nOptions:" ++ comptimePad("", 14) ++ "-D<module>.<option>=<value>\n";
             inline for (mod_fields) |mod_field| {
                 const options = @field(manifest.options_modules, mod_field.name);
                 inline for (@typeInfo(@TypeOf(options)).@"struct".fields) |opt_field| {
@@ -117,6 +117,8 @@ pub fn buildHelpText(comptime manifest: anytype) []const u8 {
                     text = text ++ toComptimeString(opt.type);
                     if (@hasField(@TypeOf(opt), "default"))
                         text = text ++ " (default: " ++ describeValue(opt.default) ++ ")";
+                    if ((std.mem.eql(u8, toComptimeString(opt.type), "enum") or std.mem.eql(u8, toComptimeString(opt.type), "enum_list")) and @hasField(@TypeOf(opt), "values"))
+                        text = text ++ " values: " ++ comptimeJoinValues(opt.values);
                     if (@hasField(@TypeOf(opt), "description"))
                         text = text ++ " — " ++ opt.description;
                     text = text ++ "\n";
@@ -169,6 +171,16 @@ fn comptimeJoinTuple(comptime tuple: anytype) []const u8 {
     return result;
 }
 
+fn comptimeJoinValues(comptime tuple: anytype) []const u8 {
+    const fields = @typeInfo(@TypeOf(tuple)).@"struct".fields;
+    var result: []const u8 = "";
+    inline for (fields, 0..) |field, i| {
+        if (i > 0) result = result ++ ", ";
+        result = result ++ describeValue(@field(tuple, field.name));
+    }
+    return result;
+}
+
 pub fn describeValue(comptime val: anytype) []const u8 {
     const ti = @typeInfo(@TypeOf(val));
     if (ti == .enum_literal) return @tagName(val);
@@ -210,6 +222,12 @@ test "buildHelpText full manifest" {
         .options_modules = .{
             .config = .{
                 .verbose = .{ .type = .bool, .default = false, .description = "Verbose output" },
+                .log_level = .{
+                    .type = .@"enum",
+                    .values = .{ .debug, .info, .warn },
+                    .default = .info,
+                    .description = "Log level",
+                },
             },
         },
         .dependencies = .{
@@ -227,8 +245,11 @@ test "buildHelpText full manifest" {
     try std.testing.expect(std.mem.indexOf(u8, text, "zig fmt src") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "./deploy.sh --prod") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "Options:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "-D<module>.<option>=<value>") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "config.verbose") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "config.log_level") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "bool") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "values: debug, info, warn") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "default: false") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "Verbose output") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "Dependencies:") != null);
