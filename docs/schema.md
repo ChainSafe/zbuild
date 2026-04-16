@@ -34,7 +34,7 @@ Reusable code units registered with the build system. Modules can be referenced 
 
 These map directly to `std.Build.Module.CreateOptions`:
 
-`link_libc`, `link_libcpp`, `single_threaded`, `strip`, `unwind_tables`, `dwarf_format`, `code_model`, `error_tracing`, `omit_frame_pointer`, `pic`, `red_zone`, `sanitize_c`, `sanitize_thread`, `stack_check`, `stack_protector`, `fuzz`, `valgrind`
+`link_libc`, `link_libcpp`, `single_threaded`, `strip`, `unwind_tables`, `dwarf_format`, `code_model`, `error_tracing`, `omit_frame_pointer`, `pic`, `red_zone`, `sanitize_c`, `sanitize_thread`, `stack_check`, `stack_protector`, `fuzz`, `valgrind`, `no_builtin`
 
 ### `link_libraries` syntax
 
@@ -51,7 +51,7 @@ Import entries can reference:
 - **Options modules:** `.config`
 - **Dependencies:** `.zlib` (imports the dependency's default module)
 - **Dependency sub-modules:** `"zlib:zlib"` (imports a specific module from a dependency)
-- **Manual modules:** bare strings like `"shared"` resolved from `b.addModule(...)` before `configureBuild`
+- **Manual modules:** `.{ .external_module = "shared" }` resolved from `b.addModule(...)` before `configureBuild`
 
 ## `executables`
 
@@ -68,15 +68,19 @@ Build targets that produce executable binaries. Each entry creates `build-exe:<n
 
 ### Root module forms
 
-The `root_module` field accepts three forms:
+The `root_module` field accepts four forms:
 
 1. **Enum literal** — references a named zbuild module: `.root_module = .core`
-2. **String** — references a named zbuild module or a manual `b.addModule(...)` module registered before `configureBuild`: `.root_module = "core"`
-3. **Inline struct** — defines the module inline, with an optional `name` override:
+2. **String** — references a named zbuild module: `.root_module = "core"`
+3. **External module struct** — references a manual `b.addModule(...)` module registered before `configureBuild`:
+   ```zig
+   .root_module = .{ .external_module = "shared" }
+   ```
+4. **Inline struct** — defines the module inline, with an optional `name` override:
    ```zig
    .root_module = .{
        .root_source_file = "src/main.zig",
-       .imports = .{ .core, .config },
+       .imports = .{ .core, .config, .{ .external_module = "shared" } },
        .name = "custom_name",  // optional: internal inline-module name used for import wiring
    },
    ```
@@ -97,10 +101,11 @@ Inline root modules are not importable targets in the manifest. If provided, `ro
 | `use_lld` | bool | — | Use LLD linker |
 | `zig_lib_dir` | string | — | Custom Zig lib directory (LazyPath resolved) |
 | `win32_manifest` | string | — | Win32 manifest file (LazyPath resolved) |
+| `win32_module_definition` | string | — | Win32 module definition file (LazyPath resolved, libraries only) |
 
 ## `libraries`
 
-Same fields as executables, plus `linker_allow_shlib_undefined`. Each entry creates a `build-lib:<name>` step.
+Same fields as executables, plus `win32_module_definition` and `linker_allow_shlib_undefined`. Each entry creates a `build-lib:<name>` step.
 
 ```zig
 .libraries = .{
@@ -154,6 +159,8 @@ Test targets. Each entry creates `test:<name>` (run) and `build-test:<name>` (in
 | `use_llvm` | bool | — | Use LLVM backend |
 | `use_lld` | bool | — | Use LLD linker |
 | `zig_lib_dir` | string | — | Custom Zig lib directory |
+| `test_runner` | struct | — | Custom test runner struct with `path` and `mode` (`.simple` or `.server`) |
+| `emit_object` | bool | `false` | Emit a test object file instead of a runnable test binary |
 
 Filters can be overridden from the CLI: `-D<test_name>.filters=specific_test`.
 
@@ -221,7 +228,8 @@ Struct with `cmd` plus optional fields:
 
 `depends_on` accepts both enum literals and strings:
 - **Enum literals:** `.myapp` resolves to the install step for artifact `myapp`
-- **Strings:** `"test:unit"`, `"fmt"`, or `"gen:prep"` resolve to a top-level step by exact name
+- **Strings:** `"test:unit"` or `"fmt"` resolve to manifest-owned top-level steps by exact name
+- **External steps:** `.{ .external_step = "gen:prep" }` resolves to a manual top-level step by exact name
 - **Legacy bare artifact strings:** `"myapp"` still resolve to the artifact install step if an artifact with that name exists
 
 Manual top-level steps must be created with `b.step(...)` before calling `configureBuild`.
@@ -344,9 +352,9 @@ zbuild validates in two phases:
 
 Compile-time validation covers:
 
-- `root_module` enum references must point to a declared module; bare string refs may defer to manual `b.addModule(...)` modules
-- `depends_on` enum references and manifest-owned step names; external manual steps are resolved later from `b.top_level_steps`
-- `imports` syntax, local/dependency references, and dependency base names; bare string imports may defer to manual `b.addModule(...)` modules
+- `root_module` enum references, named-module strings, and explicit external module refs
+- `depends_on` enum references, manifest-owned step names, and explicit external step refs
+- `imports` syntax, local/dependency references, and explicit external manual module refs
 - `link_libraries` syntax and dependency base names
 - semantic version strings on executables and libraries
 - dependency-backed LazyPath syntax (`"dep:path"` / `"dep:wf_name:path"`)
@@ -356,7 +364,7 @@ Compile-time validation covers:
 Configure-time validation covers:
 
 - manual modules referenced from `root_module` and `imports`
-- manual or aggregate top-level steps referenced from `depends_on`
+- manual top-level steps referenced from `depends_on`
 - dependency default modules and sub-modules referenced from `imports`
 - dependency artifacts referenced from `link_libraries`
 - dependency named lazy paths and named `WriteFile` steps referenced from LazyPath fields

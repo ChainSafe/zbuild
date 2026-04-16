@@ -10,25 +10,25 @@
     .modules = .{
         .core = .{
             .root_source_file = "src/core.zig",
-            .imports = .{"shared"},
+            .imports = .{.{ .external_module = "shared" }},
         },
     },
     .executables = .{
         .myapp = .{
             .root_module = .{
                 .root_source_file = "src/main.zig",
-                .imports = .{ .core, "shared" },
+                .imports = .{ .core, .{ .external_module = "shared" } },
             },
-            .depends_on = .{"gen:prep"},
+            .depends_on = .{.{ .external_step = "gen:prep" }},
         },
         .shared_exe = .{
-            .root_module = "shared",
+            .root_module = .{ .external_module = "shared" },
         },
     },
     .runs = .{
         .demo = .{
             .cmd = .{ "echo", "manual interop ok" },
-            .depends_on = .{"gen:prep"},
+            .depends_on = .{.{ .external_step = "gen:prep" }},
         },
     },
 }

@@ -85,6 +85,30 @@ pub fn build(b: *std.Build) void {
         .stdout_match = "manual interop ok",
     });
     addFixtureCommand(b, tls_test_fixtures, .{
+        .name = "undeclared-external-module",
+        .cwd = "test/fixtures/undeclared_external_module",
+        .expect_exit = 2,
+        .stderr_match = "import references unknown target 'shared'",
+    });
+    addFixtureCommand(b, tls_test_fixtures, .{
+        .name = "undeclared-external-step",
+        .cwd = "test/fixtures/undeclared_external_step",
+        .expect_exit = 2,
+        .stderr_match = "depends_on references unknown step 'gen:prep'",
+    });
+    addFixtureCommand(b, tls_test_fixtures, .{
+        .name = "manual-module-collision",
+        .cwd = "test/fixtures/manual_module_collision",
+        .expect_exit = 1,
+        .stderr_match = "named module 'core' collides with an existing module registered before configureBuild",
+    });
+    addFixtureCommand(b, tls_test_fixtures, .{
+        .name = "manual-step-collision",
+        .cwd = "test/fixtures/manual_step_collision",
+        .expect_exit = 1,
+        .stderr_match = "run command step 'cmd:demo' collides with an existing top-level step registered before configureBuild",
+    });
+    addFixtureCommand(b, tls_test_fixtures, .{
         .name = "inline-name-collision",
         .cwd = "test/fixtures/inline_name_collision",
         .expect_exit = 2,
@@ -101,5 +125,15 @@ pub fn build(b: *std.Build) void {
         .cwd = "test/fixtures/dependency_bad_lazy_path",
         .expect_exit = 1,
         .stderr_match = "could not resolve named lazy path 'missing' from dependency 'dep_pkg'",
+    });
+    addFixtureCommand(b, tls_test_fixtures, .{
+        .name = "stdlib-passthrough-library",
+        .cwd = "test/fixtures/stdlib_passthrough",
+        .build_args = &.{"build-lib:mylib"},
+    });
+    addFixtureCommand(b, tls_test_fixtures, .{
+        .name = "stdlib-passthrough-test",
+        .cwd = "test/fixtures/stdlib_passthrough",
+        .build_args = &.{"build-test:unit"},
     });
 }

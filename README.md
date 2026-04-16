@@ -6,7 +6,7 @@ Declarative build configuration for Zig projects.
 
 zbuild is a Zig library that configures your entire `std.Build` graph from the fields in your `build.zig.zon`. Using Zig's `@import("build.zig.zon")`, the compiler reads your manifest as a typed struct at comptime - no runtime parsing, no codegen, no intermediate representation. The build graph is generated directly by the compiler.
 
-zbuild works alongside manual `build.zig` code. Use it for the declarative 90%, and write Zig for the rest. If the manifest needs to reference a manual module or top-level step, register it before calling `configureBuild`.
+zbuild works alongside manual `build.zig` code. Use it for the declarative 90%, and write Zig for the rest. If the manifest needs to reference a manual module or top-level step, use an explicit manifest ref like `.{ .external_module = "shared" }` or `.{ .external_step = "gen:prep" }`, then register it before calling `configureBuild`.
 
 ## Before and after
 
