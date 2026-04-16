@@ -1,0 +1,23 @@
+.{
+    .name = .root_mod_string_opt,
+    .version = "0.1.0",
+    .fingerprint = 0x80659922f8f360cd,
+    .minimum_zig_version = "0.16.0",
+    .paths = .{ "build.zig", "build.zig.zon", "src" },
+    .dependencies = .{
+        .zbuild = .{ .path = "../../.." },
+    },
+    .options_modules = .{
+        .config = .{
+            .verbose = .{
+                .type = .bool,
+                .default = false,
+            },
+        },
+    },
+    .executables = .{
+        .app = .{
+            .root_module = "config",
+        },
+    },
+}

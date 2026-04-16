@@ -88,6 +88,8 @@ The `root_module` field accepts four forms:
 
 Inline root modules are not importable targets in the manifest. If provided, `root_module.name` must be unique across all inline root modules and must not collide with a named module.
 
+`root_module` string refs are reserved for manual modules only. Names that belong to zbuild-owned modules or `options_modules` are rejected.
+
 ### Fields
 
 | Field | Type | Default | Description |
@@ -229,8 +231,10 @@ Struct with `cmd` plus optional fields:
 
 `depends_on` accepts both enum literals and strings:
 - **Enum literals:** `.myapp` resolves to the install step for artifact `myapp`
-- **Strings with zbuild-owned names:** `"run:myapp"`, `"test:unit"`, `"cmd:demo"`, or `"fmt"` resolve to exact manifest-owned top-level steps
+- **Strings with zbuild-owned names:** `"run:myapp"`, `"test:unit"`, `"cmd:demo"`, `"test"`, or `"fmt"` resolve to exact manifest-owned top-level steps when zbuild generates those step names
 - **Other strings:** `"gen:prep"` resolves to a manual top-level step created before `configureBuild`
+
+If the manifest has no `tests` or `fmts`, bare `"test"` and `"fmt"` remain available for manual top-level steps registered before `configureBuild`.
 
 Installable artifact names across `executables`, `libraries`, and `objects` must be unique. This keeps enum-literal shorthand unambiguous: `.myapp` always means exactly one artifact install step.
 

@@ -94,6 +94,12 @@ pub fn build(b: *std.Build) void {
         .cwd = "test/fixtures/undeclared_external_step",
     });
     addFixtureCommand(b, tls_test_fixtures, .{
+        .name = "manual-step-named-test",
+        .cwd = "test/fixtures/manual_step_named_test",
+        .build_args = &.{"cmd:demo"},
+        .stdout_match = "manual test step ok",
+    });
+    addFixtureCommand(b, tls_test_fixtures, .{
         .name = "manual-module-collision",
         .cwd = "test/fixtures/manual_module_collision",
         .expect_exit = 1,
@@ -134,6 +140,12 @@ pub fn build(b: *std.Build) void {
         .cwd = "test/fixtures/dependency_bad_lazy_path",
         .expect_exit = 1,
         .stderr_match = "could not resolve named lazy path 'missing' from dependency 'dep_pkg'",
+    });
+    addFixtureCommand(b, tls_test_fixtures, .{
+        .name = "root-module-string-options-module",
+        .cwd = "test/fixtures/root_module_string_options_module",
+        .expect_exit = 2,
+        .stderr_match = "options module 'config' is import-only and cannot be used as root_module",
     });
     addFixtureCommand(b, tls_test_fixtures, .{
         .name = "duplicate-installable-artifact-name",

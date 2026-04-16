@@ -375,6 +375,9 @@ fn validateRootModuleRef(
     if (hasModule(manifest, ref_name)) {
         @compileError(section ++ " '" ++ name ++ "': root_module string refs are reserved for manual modules; use ." ++ ref_name ++ " for zbuild modules");
     }
+    if (hasOptionsModule(manifest, ref_name)) {
+        @compileError(section ++ " '" ++ name ++ "': root_module string refs are reserved for manual modules; options module '" ++ ref_name ++ "' is import-only and cannot be used as root_module");
+    }
 }
 
 fn validateDependsOn(
@@ -412,7 +415,7 @@ fn validateDependsOn(
             continue; // manifest-owned top-level step
         }
 
-        if (isReservedGeneratedStepName(opts, dep_name)) {
+        if (isReservedGeneratedStepName(manifest, opts, dep_name)) {
             @compileError(section ++ " '" ++ name ++ "': depends_on references unknown step '" ++ dep_name ++ "'");
         }
     }
@@ -986,11 +989,8 @@ fn hasReservedGeneratedStepPrefix(comptime step_ref: []const u8) bool {
     return false;
 }
 
-fn isReservedGeneratedStepName(comptime opts: Options, comptime step_ref: []const u8) bool {
-    if (comptime std.mem.eql(u8, step_ref, "test") or std.mem.eql(u8, step_ref, "fmt")) return true;
-    if (opts.help_step) |help_step| {
-        if (comptime std.mem.eql(u8, step_ref, help_step)) return true;
-    }
+fn isReservedGeneratedStepName(comptime manifest: anytype, comptime opts: Options, comptime step_ref: []const u8) bool {
+    if (isAggregateStepRef(manifest, opts, step_ref)) return true;
     return hasReservedGeneratedStepPrefix(step_ref);
 }
 
