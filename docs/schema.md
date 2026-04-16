@@ -325,14 +325,30 @@ String paths in fields like `root_source_file`, `cwd`, `zig_lib_dir`, and `inclu
 
 **Note:** Avoid naming dependencies the same as local directories (e.g., `src`). A path like `"src:file.zig"` would resolve as a dependency reference rather than a local path.
 
-## Comptime validation
+## Validation
 
-zbuild validates cross-references at compile time. These produce `@compileError` with descriptive messages:
+zbuild validates in two phases:
+
+- **Compile time (`@compileError`)** for local graph structure and manifest syntax
+- **Configure time (hard build failure before graph execution)** for dependency exports that are only knowable after `b.dependency(...)` loads the dependency build graph
+
+Compile-time validation covers:
 
 - `root_module` enum/string references must point to a declared module
 - `depends_on` entries: plain names (`.mylib`) reference artifact install steps; colon-form strings (`"test:unit"`, `"cmd:deploy"`) reference any named step
-- `imports` entries must reference a module, options_module, or dependency
+- `imports` syntax and dependency base names
+- `link_libraries` syntax and dependency base names
+- dependency-backed LazyPath syntax (`"dep:path"` / `"dep:wf_name:path"`)
+- target strings on modules
 - `stdin` and `stdin_file` on the same run are mutually exclusive
+
+Configure-time validation covers:
+
+- dependency default modules and sub-modules referenced from `imports`
+- dependency artifacts referenced from `link_libraries`
+- dependency named lazy paths and named `WriteFile` steps referenced from LazyPath fields
+
+These configure-time failures stop `zig build` before the graph runs; they do not degrade into stdlib panics.
 
 Unknown fields at any level are silently ignored for forward compatibility with future Zig versions.
 

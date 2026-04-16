@@ -132,7 +132,7 @@ zig build help         # show project build info
 - **Runs** — system commands in short form (tuple) or long form (struct with env, cwd, stdin, depends_on)
 - **Options modules** — build-time options importable from Zig source code
 - **Dependency args** — forward comptime arguments to `b.dependency()` calls
-- **Comptime validation** — typos in module/artifact/import references become compile errors
+- **Two-phase validation** — local graph references fail at comptime; dependency exports and dependency-backed paths fail during configure before the build graph runs
 - **Built-in help step** — `zig build help` shows a formatted overview of your project (reads `name`, `version`, `description` from your manifest)
 
 ## Documentation

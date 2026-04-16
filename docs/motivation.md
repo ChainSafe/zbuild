@@ -12,7 +12,7 @@ Zig's `@import("build.zig.zon")` gives comptime access to the project manifest a
 
 - **The compiler is the parser.** No runtime ZON parsing, no custom IR, no serialization.
 - **The type system is the schema.** Invalid field types are caught by the compiler.
-- **`@compileError` is the validation framework.** Typos in module references become compile errors with descriptive messages.
+- **Validation splits cleanly by what is actually knowable.** Local manifest structure fails at comptime; dependency exports are validated immediately after dependency loading, before the build graph runs.
 - **`inline for` over struct fields** generates specialized code per manifest entry. Zero runtime overhead.
 
 ## Before and after

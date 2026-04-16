@@ -54,6 +54,8 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: 
         }
     }
 
+    if (runner.validateResolvedManifest(manifest)) return error.InvalidManifest;
+
     // Phase 2: Create options modules
     if (@hasField(@TypeOf(manifest), "options_modules")) {
         inline for (@typeInfo(@TypeOf(manifest.options_modules)).@"struct".fields) |field| {
@@ -159,11 +161,11 @@ fn validateManifest(comptime manifest: anytype) void {
             inline for (@typeInfo(@TypeOf(@field(manifest, section))).@"struct".fields) |field| {
                 const item = @field(@field(manifest, section), field.name);
                 validateRootModuleRef(manifest, item.root_module, section, field.name);
+                validateArtifactFields(manifest, item, section, field.name);
                 if (@hasField(@TypeOf(item), "depends_on"))
                     validateDependsOn(manifest, item.depends_on, section, field.name);
                 if (@typeInfo(@TypeOf(item.root_module)) == .@"struct") {
-                    if (@hasField(@TypeOf(item.root_module), "imports"))
-                        validateImports(manifest, item.root_module.imports, section, field.name);
+                    validateModuleDefinition(manifest, item.root_module, section, field.name);
                 }
             }
         }
@@ -172,9 +174,7 @@ fn validateManifest(comptime manifest: anytype) void {
     // Validate named module imports
     if (@hasField(@TypeOf(manifest), "modules")) {
         inline for (@typeInfo(@TypeOf(manifest.modules)).@"struct".fields) |field| {
-            const mod = @field(manifest.modules, field.name);
-            if (@hasField(@TypeOf(mod), "imports"))
-                validateImports(manifest, mod.imports, "modules", field.name);
+            validateModuleDefinition(manifest, @field(manifest.modules, field.name), "modules", field.name);
         }
     }
 
@@ -189,6 +189,10 @@ fn validateManifest(comptime manifest: anytype) void {
                     validateDependsOn(manifest, run.depends_on, "runs", field.name);
                 if (@hasField(@TypeOf(run), "stdin") and @hasField(@TypeOf(run), "stdin_file"))
                     @compileError("runs '" ++ field.name ++ "': stdin and stdin_file are mutually exclusive");
+                if (@hasField(@TypeOf(run), "cwd"))
+                    validateLazyPathSyntax(manifest, run.cwd, "runs", field.name, "cwd");
+                if (@hasField(@TypeOf(run), "stdin_file"))
+                    validateLazyPathSyntax(manifest, run.stdin_file, "runs", field.name, "stdin_file");
             }
         }
     }
@@ -232,6 +236,78 @@ fn validateImports(comptime manifest: anytype, comptime imports: anytype, compti
             @compileError(section ++ " '" ++ name ++ "': import references unknown target '" ++ import_name ++ "'");
         }
     }
+}
+
+fn validateModuleDefinition(comptime manifest: anytype, comptime mod: anytype, comptime section: []const u8, comptime name: []const u8) void {
+    const Mod = @TypeOf(mod);
+    if (@hasField(Mod, "imports"))
+        validateImports(manifest, mod.imports, section, name);
+    if (@hasField(Mod, "link_libraries"))
+        validateLinkLibraries(manifest, mod.link_libraries, section, name);
+    if (@hasField(Mod, "root_source_file"))
+        validateLazyPathSyntax(manifest, mod.root_source_file, section, name, "root_source_file");
+    if (@hasField(Mod, "target"))
+        validateTargetString(section, name, mod.target);
+    if (@hasField(Mod, "include_paths")) {
+        inline for (@typeInfo(@TypeOf(mod.include_paths)).@"struct".fields) |field| {
+            validateLazyPathSyntax(manifest, @field(mod.include_paths, field.name), section, name, "include_paths");
+        }
+    }
+}
+
+fn validateArtifactFields(comptime manifest: anytype, comptime item: anytype, comptime section: []const u8, comptime name: []const u8) void {
+    const Item = @TypeOf(item);
+    if (@hasField(Item, "zig_lib_dir"))
+        validateLazyPathSyntax(manifest, item.zig_lib_dir, section, name, "zig_lib_dir");
+    if (@hasField(Item, "win32_manifest"))
+        validateLazyPathSyntax(manifest, item.win32_manifest, section, name, "win32_manifest");
+}
+
+fn validateLinkLibraries(comptime manifest: anytype, comptime links: anytype, comptime section: []const u8, comptime name: []const u8) void {
+    inline for (@typeInfo(@TypeOf(links)).@"struct".fields) |field| {
+        const spec = toComptimeString(@field(links, field.name));
+        const dep_name = comptimeBaseName(spec);
+        const separator_count = comptime countSeparators(spec, ':');
+
+        if (separator_count > 1 or dep_name.len == 0 or (separator_count == 1 and comptimeAfterSep(spec).len == 0)) {
+            @compileError(section ++ " '" ++ name ++ "': link_libraries entry '" ++ spec ++ "' must be 'dep_name' or 'dep_name:artifact_name'");
+        }
+        if (!hasDependency(manifest, dep_name)) {
+            @compileError(section ++ " '" ++ name ++ "': link_libraries references unknown dependency '" ++ dep_name ++ "'");
+        }
+    }
+}
+
+fn validateLazyPathSyntax(comptime manifest: anytype, comptime path: []const u8, comptime section: []const u8, comptime name: []const u8, comptime field_name: []const u8) void {
+    const separator_count = comptime countSeparators(path, ':');
+    if (separator_count == 0) return;
+
+    const dep_name = comptimeBaseName(path);
+    if (!hasDependency(manifest, dep_name)) return;
+
+    if (separator_count > 2) {
+        @compileError(section ++ " '" ++ name ++ "': " ++ field_name ++ " path '" ++ path ++ "' must be 'dep:path' or 'dep:wf_name:path'");
+    }
+
+    const rest = comptimeAfterSep(path);
+    if (rest.len == 0) {
+        @compileError(section ++ " '" ++ name ++ "': " ++ field_name ++ " path '" ++ path ++ "' is missing the dependency export name");
+    }
+
+    if (separator_count == 2 and comptime std.mem.indexOfScalar(u8, rest, ':') == 0) {
+        @compileError(section ++ " '" ++ name ++ "': " ++ field_name ++ " path '" ++ path ++ "' is missing the WriteFiles name");
+    }
+
+    if (separator_count == 2 and comptime lastSegment(path).len == 0) {
+        @compileError(section ++ " '" ++ name ++ "': " ++ field_name ++ " path '" ++ path ++ "' is missing the generated sub-path");
+    }
+}
+
+fn validateTargetString(comptime section: []const u8, comptime name: []const u8, comptime target_str: []const u8) void {
+    if (std.mem.eql(u8, target_str, "native")) return;
+    _ = std.Target.Query.parse(.{ .arch_os_abi = target_str }) catch |err| {
+        @compileError(section ++ " '" ++ name ++ "': invalid target '" ++ target_str ++ "' (" ++ @errorName(err) ++ ")");
+    };
 }
 
 fn validateOptionsModules(comptime manifest: anytype) void {
@@ -377,6 +453,13 @@ fn hasArtifact(comptime manifest: anytype, comptime name: []const u8) bool {
     return false;
 }
 
+fn hasDependency(comptime manifest: anytype, comptime name: []const u8) bool {
+    if (@hasField(@TypeOf(manifest), "dependencies")) {
+        if (@hasField(@TypeOf(manifest.dependencies), name)) return true;
+    }
+    return false;
+}
+
 fn hasStepTarget(comptime manifest: anytype, comptime step_ref: []const u8) bool {
     const prefix = comptimeBaseName(step_ref);
     const target_name = comptimeAfterSep(step_ref);
@@ -409,9 +492,10 @@ fn isImportable(comptime manifest: anytype, comptime name: []const u8) bool {
     if (@hasField(@TypeOf(manifest), "options_modules")) {
         if (@hasField(@TypeOf(manifest.options_modules), name)) return true;
     }
-    if (@hasField(@TypeOf(manifest), "dependencies")) {
-        const base = comptimeBaseName(name);
-        if (@hasField(@TypeOf(manifest.dependencies), base)) return true;
+    if (hasDependency(manifest, comptimeBaseName(name))) {
+        const separator_count = countSeparators(name, ':');
+        if (separator_count == 0) return true;
+        if (separator_count == 1) return comptimeAfterSep(name).len != 0;
     }
     return false;
 }
@@ -428,6 +512,22 @@ fn comptimeAfterSep(comptime name: []const u8) []const u8 {
         if (c == ':') return name[i + 1 ..];
     }
     return name;
+}
+
+fn lastSegment(comptime name: []const u8) []const u8 {
+    var start: usize = 0;
+    for (name, 0..) |c, i| {
+        if (c == ':') start = i + 1;
+    }
+    return name[start..];
+}
+
+fn countSeparators(name: []const u8, separator: u8) usize {
+    var count: usize = 0;
+    for (name) |c| {
+        if (c == separator) count += 1;
+    }
+    return count;
 }
 
 pub fn toComptimeString(comptime val: anytype) []const u8 {
@@ -491,6 +591,200 @@ const BuildRunner = struct {
     install_steps: std.StringHashMap(*std.Build.Step), // internal: depends_on wiring
 
     const Error = error{ OutOfMemory, ModuleNotFound };
+    const DependencyArtifactLookup = union(enum) {
+        missing,
+        ambiguous,
+        found: *std.Build.Step.Compile,
+    };
+
+    fn validateResolvedManifest(self: *BuildRunner, comptime manifest: anytype) bool {
+        var failed = false;
+
+        if (@hasField(@TypeOf(manifest), "modules")) {
+            inline for (@typeInfo(@TypeOf(manifest.modules)).@"struct".fields) |field| {
+                failed = self.validateResolvedModuleDefinition("modules", field.name, @field(manifest.modules, field.name)) or failed;
+            }
+        }
+
+        inline for (.{ "executables", "libraries", "objects", "tests" }) |section| {
+            if (@hasField(@TypeOf(manifest), section)) {
+                inline for (@typeInfo(@TypeOf(@field(manifest, section))).@"struct".fields) |field| {
+                    const item = @field(@field(manifest, section), field.name);
+                    failed = self.validateResolvedArtifactFields(section, field.name, item) or failed;
+                    if (@typeInfo(@TypeOf(item.root_module)) == .@"struct") {
+                        failed = self.validateResolvedModuleDefinition(section, field.name, item.root_module) or failed;
+                    }
+                }
+            }
+        }
+
+        if (@hasField(@TypeOf(manifest), "runs")) {
+            inline for (@typeInfo(@TypeOf(manifest.runs)).@"struct".fields) |field| {
+                const run = @field(manifest.runs, field.name);
+                if (@hasField(@TypeOf(run), "cmd")) {
+                    if (@hasField(@TypeOf(run), "cwd"))
+                        failed = self.validateResolvedLazyPath(run.cwd, "runs", field.name, "cwd") or failed;
+                    if (@hasField(@TypeOf(run), "stdin_file"))
+                        failed = self.validateResolvedLazyPath(run.stdin_file, "runs", field.name, "stdin_file") or failed;
+                }
+            }
+        }
+
+        return failed;
+    }
+
+    fn validateResolvedModuleDefinition(self: *BuildRunner, comptime section: []const u8, comptime name: []const u8, comptime mod: anytype) bool {
+        var failed = false;
+        const Mod = @TypeOf(mod);
+
+        if (@hasField(Mod, "imports"))
+            failed = self.validateResolvedImports(mod.imports, section, name) or failed;
+        if (@hasField(Mod, "link_libraries"))
+            failed = self.validateResolvedLinkLibraries(mod.link_libraries, section, name) or failed;
+        if (@hasField(Mod, "root_source_file"))
+            failed = self.validateResolvedLazyPath(mod.root_source_file, section, name, "root_source_file") or failed;
+        if (@hasField(Mod, "include_paths")) {
+            inline for (@typeInfo(@TypeOf(mod.include_paths)).@"struct".fields) |field| {
+                failed = self.validateResolvedLazyPath(@field(mod.include_paths, field.name), section, name, "include_paths") or failed;
+            }
+        }
+
+        return failed;
+    }
+
+    fn validateResolvedArtifactFields(self: *BuildRunner, comptime section: []const u8, comptime name: []const u8, comptime item: anytype) bool {
+        var failed = false;
+        const Item = @TypeOf(item);
+
+        if (@hasField(Item, "zig_lib_dir"))
+            failed = self.validateResolvedLazyPath(item.zig_lib_dir, section, name, "zig_lib_dir") or failed;
+        if (@hasField(Item, "win32_manifest"))
+            failed = self.validateResolvedLazyPath(item.win32_manifest, section, name, "win32_manifest") or failed;
+
+        return failed;
+    }
+
+    fn validateResolvedImports(self: *BuildRunner, comptime imports: anytype, comptime section: []const u8, comptime name: []const u8) bool {
+        var failed = false;
+
+        inline for (@typeInfo(@TypeOf(imports)).@"struct".fields) |field| {
+            const import_name = comptime toComptimeString(@field(imports, field.name));
+            if (self.result.modules.get(import_name) == null and self.result.options_modules.get(import_name) == null) {
+                const dep_name = comptimeBaseName(import_name);
+                if (self.result.dependencies.get(dep_name)) |dep| {
+                    const module_name = if (countSeparators(import_name, ':') == 0) import_name else comptimeAfterSep(import_name);
+
+                    if (dep.builder.modules.get(module_name) == null) {
+                        self.invalidateManifest("dependency import '{s}' in {s} '{s}' could not resolve module '{s}' from dependency '{s}'", .{
+                            import_name,
+                            section,
+                            name,
+                            module_name,
+                            dep_name,
+                        });
+                        failed = true;
+                    }
+                }
+            }
+        }
+
+        return failed;
+    }
+
+    fn validateResolvedLinkLibraries(self: *BuildRunner, comptime links: anytype, comptime section: []const u8, comptime name: []const u8) bool {
+        var failed = false;
+
+        inline for (@typeInfo(@TypeOf(links)).@"struct".fields) |field| {
+            const spec = comptime toComptimeString(@field(links, field.name));
+            const dep_name = comptime comptimeBaseName(spec);
+            const artifact_name = comptime comptimeAfterSep(spec);
+            if (self.result.dependencies.get(dep_name)) |dep| {
+                switch (lookupDependencyArtifact(dep, artifact_name)) {
+                    .found => {},
+                    .missing => {
+                        self.invalidateManifest("{s} '{s}': link_libraries entry '{s}' could not resolve artifact '{s}' from dependency '{s}'", .{
+                            section,
+                            name,
+                            spec,
+                            artifact_name,
+                            dep_name,
+                        });
+                        failed = true;
+                    },
+                    .ambiguous => {
+                        self.invalidateManifest("{s} '{s}': link_libraries entry '{s}' resolves ambiguous artifact '{s}' from dependency '{s}'", .{
+                            section,
+                            name,
+                            spec,
+                            artifact_name,
+                            dep_name,
+                        });
+                        failed = true;
+                    },
+                }
+            } else {
+                self.invalidateManifest("{s} '{s}': link_libraries references missing dependency '{s}'", .{ section, name, dep_name });
+                failed = true;
+            }
+        }
+
+        return failed;
+    }
+
+    fn validateResolvedLazyPath(self: *BuildRunner, path: []const u8, comptime section: []const u8, comptime name: []const u8, comptime field_name: []const u8) bool {
+        const separator_count = countSeparators(path, ':');
+        if (separator_count == 0) return false;
+
+        var parts = std.mem.splitScalar(u8, path, ':');
+        const dep_name = parts.first();
+        const dep = self.result.dependencies.get(dep_name) orelse return false;
+        const export_name = parts.next() orelse return false;
+
+        if (separator_count == 1) {
+            if (dep.builder.named_lazy_paths.get(export_name) == null) {
+                self.invalidateManifest("{s} '{s}': {s} path '{s}' could not resolve named lazy path '{s}' from dependency '{s}'", .{
+                    section,
+                    name,
+                    field_name,
+                    path,
+                    export_name,
+                    dep_name,
+                });
+                return true;
+            }
+            return false;
+        }
+
+        if (dep.builder.named_writefiles.get(export_name) == null) {
+            self.invalidateManifest("{s} '{s}': {s} path '{s}' could not resolve WriteFiles step '{s}' from dependency '{s}'", .{
+                section,
+                name,
+                field_name,
+                path,
+                export_name,
+                dep_name,
+            });
+            return true;
+        }
+
+        return false;
+    }
+
+    fn invalidateManifest(self: *BuildRunner, comptime fmt: []const u8, args: anytype) void {
+        std.log.err("zbuild: " ++ fmt, args);
+        self.b.invalid_user_input = true;
+    }
+
+    fn lookupDependencyArtifact(dep: *std.Build.Dependency, name: []const u8) DependencyArtifactLookup {
+        var found: ?*std.Build.Step.Compile = null;
+        for (dep.builder.install_tls.step.dependencies.items) |dep_step| {
+            const inst = dep_step.cast(std.Build.Step.InstallArtifact) orelse continue;
+            if (!std.mem.eql(u8, inst.artifact.name, name)) continue;
+            if (found != null) return .ambiguous;
+            found = inst.artifact;
+        }
+        return if (found) |artifact| .{ .found = artifact } else .missing;
+    }
 
     // --- Module creation ---
 
@@ -529,7 +823,27 @@ const BuildRunner = struct {
                 const dep_name = comptime comptimeBaseName(lib_spec);
                 const artifact_name = comptime comptimeAfterSep(lib_spec);
                 if (self.result.dependencies.get(dep_name)) |dep| {
-                    m.linkLibrary(dep.artifact(artifact_name));
+                    switch (lookupDependencyArtifact(dep, artifact_name)) {
+                        .found => |artifact| m.linkLibrary(artifact),
+                        .missing => {
+                            self.invalidateManifest("modules '{s}': link_libraries entry '{s}' could not resolve artifact '{s}' from dependency '{s}'", .{
+                                name,
+                                lib_spec,
+                                artifact_name,
+                                dep_name,
+                            });
+                            return error.ModuleNotFound;
+                        },
+                        .ambiguous => {
+                            self.invalidateManifest("modules '{s}': link_libraries entry '{s}' resolves ambiguous artifact '{s}' from dependency '{s}'", .{
+                                name,
+                                lib_spec,
+                                artifact_name,
+                                dep_name,
+                            });
+                            return error.ModuleNotFound;
+                        },
+                    }
                 }
             }
         }
@@ -1123,21 +1437,45 @@ const BuildRunner = struct {
         const first = parts.first();
         if (self.result.dependencies.get(first)) |dep| {
             const module_name = if (parts.next()) |rest| rest else first;
-            return dep.module(module_name);
+            if (dep.builder.modules.get(module_name)) |module| return module;
+            self.invalidateManifest("dependency import '{s}' could not resolve module '{s}' from dependency '{s}'", .{
+                import_name,
+                module_name,
+                first,
+            });
+            return error.ModuleNotFound;
         }
         std.log.err("zbuild: unresolved import '{s}'", .{import_name});
         return error.ModuleNotFound;
     }
 
     fn resolveLazyPath(self: *BuildRunner, path: []const u8) std.Build.LazyPath {
+        if (countSeparators(path, ':') == 0) return self.b.path(path);
+
         var parts = std.mem.splitScalar(u8, path, ':');
         const first = parts.first();
         if (self.result.dependencies.get(first)) |dep| {
-            const next = parts.next() orelse return dep.namedLazyPath(first);
+            const next = parts.next() orelse return self.b.path(path);
             if (parts.next()) |last| {
-                return dep.namedWriteFiles(next).getDirectory().path(self.b, last);
+                if (dep.builder.named_writefiles.get(next)) |write_files| {
+                    return write_files.getDirectory().path(self.b, last);
+                }
+                self.invalidateManifest("lazy path '{s}' could not resolve WriteFiles step '{s}' from dependency '{s}'", .{
+                    path,
+                    next,
+                    first,
+                });
+                return self.b.path(path);
             }
-            return dep.namedLazyPath(next);
+            if (dep.builder.named_lazy_paths.get(next)) |lazy_path| {
+                return lazy_path;
+            }
+            self.invalidateManifest("lazy path '{s}' could not resolve named lazy path '{s}' from dependency '{s}'", .{
+                path,
+                next,
+                first,
+            });
+            return self.b.path(path);
         }
         return self.b.path(path);
     }
@@ -1408,6 +1746,16 @@ test "hasArtifact" {
     try std.testing.expect(!comptime hasArtifact(manifest, "missing"));
 }
 
+test "hasDependency" {
+    const manifest = .{
+        .dependencies = .{
+            .zlib = .{},
+        },
+    };
+    try std.testing.expect(comptime hasDependency(manifest, "zlib"));
+    try std.testing.expect(!comptime hasDependency(manifest, "missing"));
+}
+
 test "hasStepTarget" {
     const manifest = .{
         .executables = .{ .myapp = .{ .root_module = .{ .root_source_file = "src/main.zig" } } },
@@ -1473,6 +1821,9 @@ test "isImportable" {
     try std.testing.expect(comptime isImportable(manifest, "zlib"));
     // Dependency sub-module is importable (colon-separated)
     try std.testing.expect(comptime isImportable(manifest, "zlib:zlib"));
+    // Invalid dependency import syntax is rejected
+    try std.testing.expect(!comptime isImportable(manifest, "zlib:"));
+    try std.testing.expect(!comptime isImportable(manifest, "zlib:zlib:extra"));
     // Unknown is not importable
     try std.testing.expect(!comptime isImportable(manifest, "missing"));
 }
@@ -1494,6 +1845,12 @@ test "comptimeAfterSep" {
 test "toComptimeString" {
     try std.testing.expectEqualStrings("hello", comptime toComptimeString("hello"));
     try std.testing.expectEqualStrings("world", comptime toComptimeString(.world));
+}
+
+test "countSeparators" {
+    try std.testing.expectEqual(@as(usize, 0), countSeparators("plain", ':'));
+    try std.testing.expectEqual(@as(usize, 1), countSeparators("dep:module", ':'));
+    try std.testing.expectEqual(@as(usize, 2), countSeparators("dep:wf:path", ':'));
 }
 
 test "comptimePascalCase" {
