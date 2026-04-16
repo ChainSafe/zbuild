@@ -76,9 +76,11 @@ The `root_module` field accepts three forms:
    .root_module = .{
        .root_source_file = "src/main.zig",
        .imports = .{ .core, .config },
-       .name = "custom_name",  // optional: overrides the registered module name
+       .name = "custom_name",  // optional: internal inline-module name used for import wiring
    },
    ```
+
+Inline root modules are not importable targets in the manifest. If provided, `root_module.name` must be unique across all inline root modules and must not collide with a named module.
 
 ### Fields
 

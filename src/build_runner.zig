@@ -40,6 +40,7 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: 
             .fmts = std.StringHashMap(*std.Build.Step.Fmt).init(b.allocator),
         },
         .install_steps = std.StringHashMap(*std.Build.Step).init(b.allocator),
+        .inline_modules = std.StringHashMap(*std.Build.Module).init(b.allocator),
     };
 
     // Phase 1: Resolve dependencies (comptime args forwarding)
@@ -67,7 +68,7 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: 
     if (@hasField(@TypeOf(manifest), "modules")) {
         inline for (@typeInfo(@TypeOf(manifest.modules)).@"struct".fields) |field| {
             const mod = @field(manifest.modules, field.name);
-            const m = try runner.createModule(mod, field.name);
+            const m = try runner.createModule(mod, field.name, &runner.result.modules);
             const is_private = @hasField(@TypeOf(mod), "private") and mod.private;
             if (!is_private) {
                 try b.modules.put(b.graph.arena, b.dupe(field.name), m);
@@ -155,6 +156,8 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: 
 // dependency references, and artifact names become compile errors.
 
 fn validateManifest(comptime manifest: anytype) void {
+    validateInlineModuleNames(manifest);
+
     // Validate artifact sections: root_module refs, depends_on, and inline module imports
     inline for (.{ "executables", "libraries", "objects", "tests" }) |section| {
         if (@hasField(@TypeOf(manifest), section)) {
@@ -196,6 +199,51 @@ fn validateManifest(comptime manifest: anytype) void {
             }
         }
     }
+}
+
+fn validateInlineModuleNames(comptime manifest: anytype) void {
+    inline for (.{ "executables", "libraries", "objects", "tests" }) |section| {
+        if (!@hasField(@TypeOf(manifest), section)) continue;
+
+        const items = @field(manifest, section);
+        const item_fields = @typeInfo(@TypeOf(items)).@"struct".fields;
+        inline for (item_fields, 0..) |field, i| {
+            const item = @field(items, field.name);
+            if (@typeInfo(@TypeOf(item.root_module)) != .@"struct") continue;
+
+            const inline_name = inlineRootModuleName(field.name, item.root_module);
+            if (hasModule(manifest, inline_name)) {
+                @compileError(section ++ " '" ++ field.name ++ "': inline root_module name '" ++ inline_name ++ "' collides with named module '" ++ inline_name ++ "'");
+            }
+
+            inline for (item_fields[i + 1 ..]) |other_field| {
+                const other_item = @field(items, other_field.name);
+                if (@typeInfo(@TypeOf(other_item.root_module)) != .@"struct") continue;
+                const other_name = inlineRootModuleName(other_field.name, other_item.root_module);
+                if (comptime std.mem.eql(u8, inline_name, other_name)) {
+                    @compileError(section ++ " '" ++ field.name ++ "': inline root_module name '" ++ inline_name ++ "' collides with " ++ section ++ " '" ++ other_field.name ++ "'");
+                }
+            }
+
+            inline for (.{ "executables", "libraries", "objects", "tests" }) |other_section| {
+                if (comptime std.mem.eql(u8, section, other_section)) continue;
+                if (!@hasField(@TypeOf(manifest), other_section)) continue;
+
+                inline for (@typeInfo(@TypeOf(@field(manifest, other_section))).@"struct".fields) |other_field| {
+                    const other_item = @field(@field(manifest, other_section), other_field.name);
+                    if (@typeInfo(@TypeOf(other_item.root_module)) != .@"struct") continue;
+                    const other_name = inlineRootModuleName(other_field.name, other_item.root_module);
+                    if (comptime std.mem.eql(u8, inline_name, other_name)) {
+                        @compileError(section ++ " '" ++ field.name ++ "': inline root_module name '" ++ inline_name ++ "' collides with " ++ other_section ++ " '" ++ other_field.name ++ "'");
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn inlineRootModuleName(comptime artifact_name: []const u8, comptime root_module: anytype) []const u8 {
+    return if (@hasField(@TypeOf(root_module), "name")) root_module.name else artifact_name;
 }
 
 fn validateRootModuleRef(comptime manifest: anytype, comptime root_module: anytype, comptime section: []const u8, comptime name: []const u8) void {
@@ -589,6 +637,7 @@ const BuildRunner = struct {
     optimize: std.builtin.OptimizeMode,
     result: BuildResult,
     install_steps: std.StringHashMap(*std.Build.Step), // internal: depends_on wiring
+    inline_modules: std.StringHashMap(*std.Build.Module), // internal: inline root modules only
 
     const Error = error{ OutOfMemory, ModuleNotFound };
     const DependencyArtifactLookup = union(enum) {
@@ -797,7 +846,12 @@ const BuildRunner = struct {
         "fuzz",            "valgrind",
     };
 
-    fn createModule(self: *BuildRunner, comptime mod: anytype, name: []const u8) Error!*std.Build.Module {
+    fn createModule(
+        self: *BuildRunner,
+        comptime mod: anytype,
+        name: []const u8,
+        registry: *std.StringHashMap(*std.Build.Module),
+    ) Error!*std.Build.Module {
         const Mod = @TypeOf(mod);
         var opts: std.Build.Module.CreateOptions = .{
             .root_source_file = if (@hasField(Mod, "root_source_file")) self.resolveLazyPath(mod.root_source_file) else null,
@@ -848,11 +902,20 @@ const BuildRunner = struct {
             }
         }
 
-        try self.result.modules.put(name, m);
+        if (registry != &self.result.modules and self.result.modules.get(name) != null) {
+            self.invalidateManifest("inline root_module name '{s}' collides with named module '{s}'", .{ name, name });
+            return error.ModuleNotFound;
+        }
+        if (registry.get(name) != null) {
+            self.invalidateManifest("duplicate module registration for '{s}'", .{name});
+            return error.ModuleNotFound;
+        }
+
+        try registry.put(name, m);
         return m;
     }
 
-    fn resolveModuleLink(self: *BuildRunner, comptime link: anytype, name: []const u8) Error!*std.Build.Module {
+    fn resolveModuleLink(self: *BuildRunner, comptime link: anytype, comptime name: []const u8) Error!*std.Build.Module {
         const ti = @typeInfo(@TypeOf(link));
         if (ti == .enum_literal) {
             const mod_name = @tagName(link);
@@ -867,8 +930,8 @@ const BuildRunner = struct {
                 return error.ModuleNotFound;
             };
         } else if (ti == .@"struct") {
-            const mod_name: []const u8 = if (@hasField(@TypeOf(link), "name")) link.name else name;
-            return try self.createModule(link, mod_name);
+            const mod_name = inlineRootModuleName(name, link);
+            return try self.createModule(link, mod_name, &self.inline_modules);
         } else {
             @compileError("root_module must be a string, enum literal, or struct");
         }
@@ -1349,11 +1412,8 @@ const BuildRunner = struct {
                     const item = @field(@field(manifest, section), field.name);
                     if (@typeInfo(@TypeOf(item.root_module)) == .@"struct") {
                         if (@hasField(@TypeOf(item.root_module), "imports")) {
-                            const mod_name: []const u8 = if (@hasField(@TypeOf(item.root_module), "name"))
-                                item.root_module.name
-                            else
-                                field.name;
-                            if (self.result.modules.get(mod_name)) |m| {
+                            const mod_name = inlineRootModuleName(field.name, item.root_module);
+                            if (self.inline_modules.get(mod_name)) |m| {
                                 try self.wireModuleImports(m, item.root_module.imports);
                             }
                         }
@@ -1845,6 +1905,16 @@ test "comptimeAfterSep" {
 test "toComptimeString" {
     try std.testing.expectEqualStrings("hello", comptime toComptimeString("hello"));
     try std.testing.expectEqualStrings("world", comptime toComptimeString(.world));
+}
+
+test "inlineRootModuleName" {
+    try std.testing.expectEqualStrings("demo", comptime inlineRootModuleName("demo", .{
+        .root_source_file = "src/main.zig",
+    }));
+    try std.testing.expectEqualStrings("custom_name", comptime inlineRootModuleName("demo", .{
+        .root_source_file = "src/main.zig",
+        .name = "custom_name",
+    }));
 }
 
 test "countSeparators" {
