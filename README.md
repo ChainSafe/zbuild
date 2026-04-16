@@ -4,7 +4,7 @@ Declarative build configuration for Zig projects.
 
 ## What is zbuild?
 
-zbuild is a Zig library that configures your entire `std.Build` graph from the fields in your `build.zig.zon`. Using Zig 0.14's `@import("build.zig.zon")`, the compiler reads your manifest as a typed struct at comptime — no runtime parsing, no codegen, no intermediate representation. The build graph is generated directly by the compiler.
+zbuild is a Zig library that configures your entire `std.Build` graph from the fields in your `build.zig.zon`. Using Zig's `@import("build.zig.zon")`, the compiler reads your manifest as a typed struct at comptime - no runtime parsing, no codegen, no intermediate representation. The build graph is generated directly by the compiler.
 
 zbuild works alongside manual `build.zig` code. Use it for the declarative 90%, and write Zig for the rest.
 
@@ -18,12 +18,11 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const module = b.createModule(.{
+    const module = b.addModule("myapp", .{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
-    b.modules.put(b.dupe("myapp"), module) catch @panic("OOM");
 
     const exe = b.addExecutable(.{ .name = "myapp", .root_module = module });
     const install = b.addInstallArtifact(exe, .{});
@@ -98,7 +97,7 @@ pub fn build(b: *std.Build) void {
     .name = .myproject,
     .version = "0.1.0",
     .fingerprint = 0xaabbccdd00112233,
-    .minimum_zig_version = "0.14.0",
+    .minimum_zig_version = "0.16.0",
     .paths = .{ "build.zig", "build.zig.zon", "src" },
     .dependencies = .{
         .zbuild = .{ .path = "path/to/zbuild" },
@@ -145,7 +144,7 @@ zig build help         # show project build info
 
 ## Requirements
 
-Zig 0.14+
+Zig 0.16.0+
 
 ## License
 

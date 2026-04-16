@@ -11,12 +11,11 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     // zbuild library module (for use by zbuild-powered projects)
-    const zbuild_module = b.createModule(.{
+    const zbuild_module = b.addModule("zbuild", .{
         .root_source_file = b.path("src/build_runner.zig"),
         .target = target,
         .optimize = optimize,
     });
-    b.modules.put(b.dupe("zbuild"), zbuild_module) catch @panic("OOM");
 
     // Tests
     const tls_run_test = b.step("test", "Run all tests");

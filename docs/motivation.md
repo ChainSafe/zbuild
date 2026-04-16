@@ -8,7 +8,7 @@ For newcomers, `build.zig` is one of the steepest parts of learning Zig. The bui
 
 ## The insight
 
-Zig 0.14 added `@import("build.zig.zon")`, which gives comptime access to the project manifest as a typed anonymous struct. This changes everything:
+Zig's `@import("build.zig.zon")` gives comptime access to the project manifest as a typed anonymous struct. This changes everything:
 
 - **The compiler is the parser.** No runtime ZON parsing, no custom IR, no serialization.
 - **The type system is the schema.** Invalid field types are caught by the compiler.
@@ -25,12 +25,11 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const module = b.createModule(.{
+    const module = b.addModule("myapp", .{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
-    b.modules.put(b.dupe("myapp"), module) catch @panic("OOM");
 
     const exe = b.addExecutable(.{ .name = "myapp", .root_module = module });
     const install = b.addInstallArtifact(exe, .{});

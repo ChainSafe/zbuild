@@ -68,7 +68,7 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: 
             const m = try runner.createModule(mod, field.name);
             const is_private = @hasField(@TypeOf(mod), "private") and mod.private;
             if (!is_private) {
-                try b.modules.put(b.dupe(field.name), m);
+                try b.modules.put(b.graph.arena, b.dupe(field.name), m);
             }
         }
     }
@@ -127,9 +127,11 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: 
     if (opts.help_step) |step_name| {
         const help_step_impl = try b.allocator.create(std.Build.Step);
         const S = struct {
-            fn make(_: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!void {
-                const stdout = std.io.getStdOut().writer();
-                try stdout.writeAll(comptime help.buildHelpText(manifest));
+            fn make(step: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!void {
+                var stdout_buffer: [256]u8 = undefined;
+                var stdout_writer = std.Io.File.stdout().writerStreaming(step.owner.graph.io, &stdout_buffer);
+                try stdout_writer.interface.writeAll(comptime help.buildHelpText(manifest));
+                try stdout_writer.interface.flush();
             }
         };
         help_step_impl.* = std.Build.Step.init(.{
@@ -364,11 +366,11 @@ const BuildRunner = struct {
     // --- Module creation ---
 
     const module_passthrough_fields = .{
-        "link_libc",       "link_libcpp",     "single_threaded",
-        "strip",           "unwind_tables",   "dwarf_format",
-        "code_model",      "error_tracing",   "omit_frame_pointer",
-        "pic",             "red_zone",        "sanitize_c",
-        "sanitize_thread", "stack_check",     "stack_protector",
+        "link_libc",       "link_libcpp",   "single_threaded",
+        "strip",           "unwind_tables", "dwarf_format",
+        "code_model",      "error_tracing", "omit_frame_pointer",
+        "pic",             "red_zone",      "sanitize_c",
+        "sanitize_thread", "stack_check",   "stack_protector",
         "fuzz",            "valgrind",
     };
 
@@ -609,7 +611,6 @@ const BuildRunner = struct {
             self.b.fmt("Run the {s} command", .{name}),
         );
         tls.dependOn(&run.step);
-
     }
 
     fn installAndRegister(
@@ -844,9 +845,8 @@ fn toEnumSlice(comptime tuple: anytype) []const []const u8 {
 
 fn isIntType(comptime t: []const u8) bool {
     return for ([_][]const u8{
-        "i8",  "u8",  "i16", "u16", "i32",  "u32",  "i64",  "u64",
-        "i128", "u128", "isize", "usize",
-        "c_short", "c_ushort", "c_int", "c_uint",
+        "i8",     "u8",      "i16",        "u16",         "i32",     "u32",      "i64",   "u64",
+        "i128",   "u128",    "isize",      "usize",       "c_short", "c_ushort", "c_int", "c_uint",
         "c_long", "c_ulong", "c_longlong", "c_ulonglong",
     }) |valid| {
         if (std.mem.eql(u8, t, valid)) break true;
@@ -953,7 +953,7 @@ test "validateManifest accepts step references in depends_on" {
         .name = .myproject,
         .version = "0.1.0",
         .fingerprint = 0x1234,
-        .minimum_zig_version = "0.14.0",
+        .minimum_zig_version = "0.16.0",
         .paths = .{"."},
         .executables = .{
             .myapp = .{ .root_module = .{ .root_source_file = "src/main.zig" } },
@@ -963,7 +963,7 @@ test "validateManifest accepts step references in depends_on" {
         },
         .runs = .{
             .deploy = .{
-                .cmd = .{ "./deploy.sh" },
+                .cmd = .{"./deploy.sh"},
                 .depends_on = .{ .myapp, "test:unit" },
             },
         },
@@ -1018,7 +1018,7 @@ test "validateManifest accepts minimal manifest" {
         .name = .myproject,
         .version = "0.1.0",
         .fingerprint = 0x1234,
-        .minimum_zig_version = "0.14.0",
+        .minimum_zig_version = "0.16.0",
         .paths = .{"."},
     });
 }
@@ -1028,7 +1028,7 @@ test "validateManifest accepts valid cross-references" {
         .name = .myproject,
         .version = "0.1.0",
         .fingerprint = 0x1234,
-        .minimum_zig_version = "0.14.0",
+        .minimum_zig_version = "0.16.0",
         .paths = .{"."},
         .modules = .{
             .core = .{ .root_source_file = "src/core.zig" },
@@ -1055,7 +1055,7 @@ test "validateManifest accepts unknown top-level fields" {
         .name = .myproject,
         .version = "0.1.0",
         .fingerprint = 0x1234,
-        .minimum_zig_version = "0.14.0",
+        .minimum_zig_version = "0.16.0",
         .paths = .{"."},
         .some_future_zig_field = "should be ignored",
     });
@@ -1066,7 +1066,7 @@ test "validateManifest accepts short-form runs" {
         .name = .myproject,
         .version = "0.1.0",
         .fingerprint = 0x1234,
-        .minimum_zig_version = "0.14.0",
+        .minimum_zig_version = "0.16.0",
         .paths = .{"."},
         .runs = .{
             .fmt = .{ "zig", "fmt", "src" },
@@ -1079,14 +1079,14 @@ test "validateManifest accepts long-form runs" {
         .name = .myproject,
         .version = "0.1.0",
         .fingerprint = 0x1234,
-        .minimum_zig_version = "0.14.0",
+        .minimum_zig_version = "0.16.0",
         .paths = .{"."},
         .executables = .{
             .myapp = .{ .root_module = .{ .root_source_file = "src/main.zig" } },
         },
         .runs = .{
             .deploy = .{
-                .cmd = .{ "./deploy.sh" },
+                .cmd = .{"./deploy.sh"},
                 .cwd = "scripts",
                 .env = .{ .NODE_ENV = "production" },
                 .depends_on = .{.myapp},
@@ -1100,7 +1100,7 @@ test "validateManifest accepts run and executable with same name" {
         .name = .myproject,
         .version = "0.1.0",
         .fingerprint = 0x1234,
-        .minimum_zig_version = "0.14.0",
+        .minimum_zig_version = "0.16.0",
         .paths = .{"."},
         .executables = .{
             .deploy = .{ .root_module = .{ .root_source_file = "src/main.zig" } },
@@ -1116,11 +1116,11 @@ test "validateManifest accepts runs with unknown fields" {
         .name = .myproject,
         .version = "0.1.0",
         .fingerprint = 0x1234,
-        .minimum_zig_version = "0.14.0",
+        .minimum_zig_version = "0.16.0",
         .paths = .{"."},
         .runs = .{
             .deploy = .{
-                .cmd = .{ "./deploy.sh" },
+                .cmd = .{"./deploy.sh"},
                 .some_future_field = "ignored",
             },
         },

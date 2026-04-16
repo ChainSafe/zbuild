@@ -2,7 +2,7 @@
     .name = .zbuild,
     .version = "0.4.0",
     .fingerprint = 0x60f98ac2bf5a915c,
-    .minimum_zig_version = "0.14.0",
+    .minimum_zig_version = "0.16.0",
     .paths = .{ "build.zig", "build.zig.zon", "src" },
     .description = "Declarative build configuration for Zig projects",
     .dependencies = .{},
