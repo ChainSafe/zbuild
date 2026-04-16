@@ -1,0 +1,22 @@
+.{
+    .name = .dependency_bad_import,
+    .version = "0.1.0",
+    .fingerprint = 0x74cdf3df0f50705d,
+    .minimum_zig_version = "0.16.0",
+    .paths = .{ "build.zig", "build.zig.zon", "src", "dep" },
+    .dependencies = .{
+        .zbuild = .{ .path = "../../.." },
+        .dep_pkg = .{ .path = "dep" },
+    },
+    .modules = .{
+        .core = .{
+            .root_source_file = "src/core.zig",
+            .imports = .{ "dep_pkg:missing" },
+        },
+    },
+    .executables = .{
+        .demo = .{
+            .root_module = .core,
+        },
+    },
+}

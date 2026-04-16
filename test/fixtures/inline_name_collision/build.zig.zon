@@ -1,0 +1,22 @@
+.{
+    .name = .inline_name_collision,
+    .version = "0.1.0",
+    .fingerprint = 0x673a7a4b3b8a3ff0,
+    .minimum_zig_version = "0.16.0",
+    .paths = .{ "build.zig", "build.zig.zon", "src" },
+    .dependencies = .{
+        .zbuild = .{ .path = "../../.." },
+    },
+    .modules = .{
+        .core = .{
+            .root_source_file = "src/core.zig",
+        },
+    },
+    .executables = .{
+        .core = .{
+            .root_module = .{
+                .root_source_file = "src/main.zig",
+            },
+        },
+    },
+}
