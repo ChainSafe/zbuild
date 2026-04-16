@@ -2,7 +2,7 @@
 
 This is the complete reference for zbuild's manifest fields. These fields are added to your standard `build.zig.zon` alongside Zig's own fields (`name`, `version`, `fingerprint`, `minimum_zig_version`, `paths`, `description`, `dependencies`).
 
-Fields not recognized by zbuild are silently ignored, ensuring forward compatibility with future Zig versions.
+Unknown fields inside zbuild-owned sections are compile errors. Unknown top-level fields are left alone so Zig itself can evolve `build.zig.zon` without zbuild shadowing it.
 
 ## `modules`
 
@@ -348,6 +348,7 @@ Compile-time validation covers:
 - `depends_on` enum references and manifest-owned step names; external manual steps are resolved later from `b.top_level_steps`
 - `imports` syntax, local/dependency references, and dependency base names; bare string imports may defer to manual `b.addModule(...)` modules
 - `link_libraries` syntax and dependency base names
+- semantic version strings on executables and libraries
 - dependency-backed LazyPath syntax (`"dep:path"` / `"dep:wf_name:path"`)
 - target strings on modules
 - `stdin` and `stdin_file` on the same run are mutually exclusive
@@ -362,7 +363,7 @@ Configure-time validation covers:
 
 These configure-time failures stop `zig build` before the graph runs; they do not degrade into stdlib panics.
 
-Unknown fields at any level are silently ignored for forward compatibility with future Zig versions.
+Unknown fields inside zbuild-managed sections are compile errors. Unknown top-level fields are passed through unchanged so future Zig manifest fields remain usable.
 
 ## `configureBuild` options
 

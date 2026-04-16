@@ -164,12 +164,13 @@ fn validateManifest(comptime manifest: anytype) void {
         if (@hasField(@TypeOf(manifest), section)) {
             inline for (@typeInfo(@TypeOf(@field(manifest, section))).@"struct".fields) |field| {
                 const item = @field(@field(manifest, section), field.name);
+                validateArtifactSectionFields(section, field.name, item);
                 validateRootModuleRef(manifest, item.root_module, section, field.name);
                 validateArtifactFields(manifest, item, section, field.name);
                 if (@hasField(@TypeOf(item), "depends_on"))
                     validateDependsOn(manifest, item.depends_on, section, field.name);
                 if (@typeInfo(@TypeOf(item.root_module)) == .@"struct") {
-                    validateModuleDefinition(manifest, item.root_module, section, field.name);
+                    validateModuleDefinition(manifest, item.root_module, section, field.name, true, false);
                 }
             }
         }
@@ -178,7 +179,13 @@ fn validateManifest(comptime manifest: anytype) void {
     // Validate named module imports
     if (@hasField(@TypeOf(manifest), "modules")) {
         inline for (@typeInfo(@TypeOf(manifest.modules)).@"struct".fields) |field| {
-            validateModuleDefinition(manifest, @field(manifest.modules, field.name), "modules", field.name);
+            validateModuleDefinition(manifest, @field(manifest.modules, field.name), "modules", field.name, false, true);
+        }
+    }
+
+    if (@hasField(@TypeOf(manifest), "fmts")) {
+        inline for (@typeInfo(@TypeOf(manifest.fmts)).@"struct".fields) |field| {
+            validateFmtFields(field.name, @field(manifest.fmts, field.name));
         }
     }
 
@@ -189,6 +196,7 @@ fn validateManifest(comptime manifest: anytype) void {
         inline for (@typeInfo(@TypeOf(manifest.runs)).@"struct".fields) |field| {
             const run = @field(manifest.runs, field.name);
             if (@hasField(@TypeOf(run), "cmd")) {
+                validateRunFields(field.name, run);
                 if (@hasField(@TypeOf(run), "depends_on"))
                     validateDependsOn(manifest, run.depends_on, "runs", field.name);
                 if (@hasField(@TypeOf(run), "stdin") and @hasField(@TypeOf(run), "stdin_file"))
@@ -198,6 +206,77 @@ fn validateManifest(comptime manifest: anytype) void {
                 if (@hasField(@TypeOf(run), "stdin_file"))
                     validateLazyPathSyntax(manifest, run.stdin_file, "runs", field.name, "stdin_file");
             }
+        }
+    }
+}
+
+fn validateArtifactSectionFields(comptime section: []const u8, comptime name: []const u8, comptime item: anytype) void {
+    inline for (@typeInfo(@TypeOf(item)).@"struct".fields) |field| {
+        if (!isKnownArtifactField(section, field.name)) {
+            @compileError(section ++ " '" ++ name ++ "': unknown field '" ++ field.name ++ "'");
+        }
+    }
+}
+
+fn isKnownArtifactField(comptime section: []const u8, comptime field_name: []const u8) bool {
+    if (comptime std.mem.eql(u8, field_name, "root_module") or
+        std.mem.eql(u8, field_name, "depends_on") or
+        std.mem.eql(u8, field_name, "max_rss") or
+        std.mem.eql(u8, field_name, "use_llvm") or
+        std.mem.eql(u8, field_name, "use_lld") or
+        std.mem.eql(u8, field_name, "zig_lib_dir"))
+    {
+        return true;
+    }
+
+    if (comptime std.mem.eql(u8, section, "executables")) {
+        return std.mem.eql(u8, field_name, "version") or
+            std.mem.eql(u8, field_name, "linkage") or
+            std.mem.eql(u8, field_name, "dest_sub_path") or
+            std.mem.eql(u8, field_name, "win32_manifest");
+    }
+
+    if (comptime std.mem.eql(u8, section, "libraries")) {
+        return std.mem.eql(u8, field_name, "version") or
+            std.mem.eql(u8, field_name, "linkage") or
+            std.mem.eql(u8, field_name, "dest_sub_path") or
+            std.mem.eql(u8, field_name, "win32_manifest") or
+            std.mem.eql(u8, field_name, "linker_allow_shlib_undefined");
+    }
+
+    if (comptime std.mem.eql(u8, section, "objects")) {
+        return false;
+    }
+
+    if (comptime std.mem.eql(u8, section, "tests")) {
+        return std.mem.eql(u8, field_name, "filters");
+    }
+
+    return false;
+}
+
+fn validateFmtFields(comptime name: []const u8, comptime fmt: anytype) void {
+    inline for (@typeInfo(@TypeOf(fmt)).@"struct".fields) |field| {
+        if (!std.mem.eql(u8, field.name, "paths") and
+            !std.mem.eql(u8, field.name, "exclude_paths") and
+            !std.mem.eql(u8, field.name, "check"))
+        {
+            @compileError("fmts '" ++ name ++ "': unknown field '" ++ field.name ++ "'");
+        }
+    }
+}
+
+fn validateRunFields(comptime name: []const u8, comptime run: anytype) void {
+    inline for (@typeInfo(@TypeOf(run)).@"struct".fields) |field| {
+        if (!std.mem.eql(u8, field.name, "cmd") and
+            !std.mem.eql(u8, field.name, "cwd") and
+            !std.mem.eql(u8, field.name, "env") and
+            !std.mem.eql(u8, field.name, "inherit_stdio") and
+            !std.mem.eql(u8, field.name, "stdin") and
+            !std.mem.eql(u8, field.name, "stdin_file") and
+            !std.mem.eql(u8, field.name, "depends_on"))
+        {
+            @compileError("runs '" ++ name ++ "': unknown field '" ++ field.name ++ "'");
         }
     }
 }
@@ -321,7 +400,16 @@ fn validateImports(comptime manifest: anytype, comptime imports: anytype, compti
     }
 }
 
-fn validateModuleDefinition(comptime manifest: anytype, comptime mod: anytype, comptime section: []const u8, comptime name: []const u8) void {
+fn validateModuleDefinition(
+    comptime manifest: anytype,
+    comptime mod: anytype,
+    comptime section: []const u8,
+    comptime name: []const u8,
+    comptime allow_name: bool,
+    comptime allow_private: bool,
+) void {
+    validateModuleFields(mod, section, name, allow_name, allow_private);
+
     const Mod = @TypeOf(mod);
     if (@hasField(Mod, "imports"))
         validateImports(manifest, mod.imports, section, name);
@@ -338,12 +426,60 @@ fn validateModuleDefinition(comptime manifest: anytype, comptime mod: anytype, c
     }
 }
 
+fn validateModuleFields(comptime mod: anytype, comptime section: []const u8, comptime name: []const u8, comptime allow_name: bool, comptime allow_private: bool) void {
+    inline for (@typeInfo(@TypeOf(mod)).@"struct".fields) |field| {
+        if (!isKnownModuleField(field.name, allow_name, allow_private)) {
+            const context = if (allow_name)
+                section ++ " '" ++ name ++ "' root_module"
+            else
+                section ++ " '" ++ name ++ "'";
+            @compileError(context ++ ": unknown field '" ++ field.name ++ "'");
+        }
+    }
+}
+
+fn isKnownModuleField(comptime field_name: []const u8, comptime allow_name: bool, comptime allow_private: bool) bool {
+    if (comptime std.mem.eql(u8, field_name, "root_source_file") or
+        std.mem.eql(u8, field_name, "target") or
+        std.mem.eql(u8, field_name, "optimize") or
+        std.mem.eql(u8, field_name, "imports") or
+        std.mem.eql(u8, field_name, "link_libraries") or
+        std.mem.eql(u8, field_name, "include_paths"))
+    {
+        return true;
+    }
+
+    if (allow_name and comptime std.mem.eql(u8, field_name, "name")) return true;
+    if (allow_private and comptime std.mem.eql(u8, field_name, "private")) return true;
+
+    inline for (.{
+        "link_libc",       "link_libcpp",   "single_threaded",
+        "strip",           "unwind_tables", "dwarf_format",
+        "code_model",      "error_tracing", "omit_frame_pointer",
+        "pic",             "red_zone",      "sanitize_c",
+        "sanitize_thread", "stack_check",   "stack_protector",
+        "fuzz",            "valgrind",
+    }) |known| {
+        if (comptime std.mem.eql(u8, field_name, known)) return true;
+    }
+
+    return false;
+}
+
 fn validateArtifactFields(comptime manifest: anytype, comptime item: anytype, comptime section: []const u8, comptime name: []const u8) void {
     const Item = @TypeOf(item);
+    if (@hasField(Item, "version"))
+        validateSemverString(section, name, item.version);
     if (@hasField(Item, "zig_lib_dir"))
         validateLazyPathSyntax(manifest, item.zig_lib_dir, section, name, "zig_lib_dir");
     if (@hasField(Item, "win32_manifest"))
         validateLazyPathSyntax(manifest, item.win32_manifest, section, name, "win32_manifest");
+}
+
+fn validateSemverString(comptime section: []const u8, comptime name: []const u8, comptime version: []const u8) void {
+    _ = std.SemanticVersion.parse(version) catch |err| {
+        @compileError(section ++ " '" ++ name ++ "': invalid semantic version '" ++ version ++ "' (" ++ @errorName(err) ++ ")");
+    };
 }
 
 fn validateLinkLibraries(comptime manifest: anytype, comptime links: anytype, comptime section: []const u8, comptime name: []const u8) void {
@@ -439,6 +575,17 @@ fn validateOptionsModule(comptime module_name: []const u8, comptime options: any
 
 fn validateOption(comptime module_name: []const u8, comptime option_name: []const u8, comptime opt: anytype) void {
     const Opt = @TypeOf(opt);
+    inline for (@typeInfo(Opt).@"struct".fields) |field| {
+        if (!std.mem.eql(u8, field.name, "type") and
+            !std.mem.eql(u8, field.name, "default") and
+            !std.mem.eql(u8, field.name, "description") and
+            !std.mem.eql(u8, field.name, "values") and
+            !std.mem.eql(u8, field.name, "type_name"))
+        {
+            @compileError("options_modules '" ++ module_name ++ "." ++ option_name ++ "': unknown field '" ++ field.name ++ "'");
+        }
+    }
+
     if (!@hasField(Opt, "type")) {
         @compileError("options_modules '" ++ module_name ++ "." ++ option_name ++ "': missing required field 'type'");
     }
@@ -1002,7 +1149,7 @@ const BuildRunner = struct {
         var add_opts: std.Build.ExecutableOptions = .{
             .name = name,
             .root_module = root_module,
-            .version = if (@hasField(Exe, "version")) std.SemanticVersion.parse(exe.version) catch null else null,
+            .version = if (@hasField(Exe, "version")) std.SemanticVersion.parse(exe.version) catch unreachable else null,
         };
         inline for (artifact_passthrough_fields) |fname| {
             if (@hasField(Exe, fname)) {
@@ -1036,7 +1183,7 @@ const BuildRunner = struct {
         var add_opts: std.Build.LibraryOptions = .{
             .name = name,
             .root_module = root_module,
-            .version = if (@hasField(Lib, "version")) std.SemanticVersion.parse(lib.version) catch null else null,
+            .version = if (@hasField(Lib, "version")) std.SemanticVersion.parse(lib.version) catch unreachable else null,
         };
         inline for (artifact_passthrough_fields) |fname| {
             if (@hasField(Lib, fname)) {
@@ -2101,7 +2248,7 @@ test "validateManifest accepts valid cross-references" {
 }
 
 test "validateManifest accepts unknown top-level fields" {
-    // Forward compatibility: unknown fields should NOT cause errors
+    // Top-level unknown fields may belong to Zig itself, so zbuild leaves them alone.
     comptime validateManifest(.{
         .name = .myproject,
         .version = "0.1.0",
@@ -2158,22 +2305,6 @@ test "validateManifest accepts run and executable with same name" {
         },
         .runs = .{
             .deploy = .{ "echo", "deploying" },
-        },
-    });
-}
-
-test "validateManifest accepts runs with unknown fields" {
-    comptime validateManifest(.{
-        .name = .myproject,
-        .version = "0.1.0",
-        .fingerprint = 0x1234,
-        .minimum_zig_version = "0.16.0",
-        .paths = .{"."},
-        .runs = .{
-            .deploy = .{
-                .cmd = .{"./deploy.sh"},
-                .some_future_field = "ignored",
-            },
         },
     });
 }
