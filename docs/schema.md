@@ -51,6 +51,7 @@ Import entries can reference:
 - **Options modules:** `.config`
 - **Dependencies:** `.zlib` (imports the dependency's default module)
 - **Dependency sub-modules:** `"zlib:zlib"` (imports a specific module from a dependency)
+- **Manual modules:** bare strings like `"shared"` resolved from `b.addModule(...)` before `configureBuild`
 
 ## `executables`
 
@@ -69,8 +70,8 @@ Build targets that produce executable binaries. Each entry creates `build-exe:<n
 
 The `root_module` field accepts three forms:
 
-1. **Enum literal** — references a named module: `.root_module = .core`
-2. **String** — same as enum literal: `.root_module = "core"`
+1. **Enum literal** — references a named zbuild module: `.root_module = .core`
+2. **String** — references a named zbuild module or a manual `b.addModule(...)` module registered before `configureBuild`: `.root_module = "core"`
 3. **Inline struct** — defines the module inline, with an optional `name` override:
    ```zig
    .root_module = .{
@@ -90,7 +91,7 @@ Inline root modules are not importable targets in the manifest. If provided, `ro
 | `version` | string | — | Semantic version (e.g. `"1.0.0"`) |
 | `linkage` | enum literal | — | `.static` or `.dynamic` |
 | `dest_sub_path` | string | — | Custom install subdirectory |
-| `depends_on` | tuple | — | Steps that must complete first (plain name or `"prefix:name"`) |
+| `depends_on` | tuple | — | Steps that must complete first (artifact install step or exact top-level step name) |
 | `max_rss` | int | — | Maximum RSS for the build step |
 | `use_llvm` | bool | — | Use LLVM backend |
 | `use_lld` | bool | — | Use LLD linker |
@@ -214,9 +215,16 @@ Struct with `cmd` plus optional fields:
 | `inherit_stdio` | bool | `false` | Forward stdio to terminal |
 | `stdin` | string | — | Bytes piped to stdin |
 | `stdin_file` | string | — | File piped to stdin (LazyPath resolved) |
-| `depends_on` | tuple | — | Steps that must complete first (plain name or `"prefix:name"`) |
+| `depends_on` | tuple | — | Steps that must complete first (artifact install step or exact top-level step name) |
 
 `stdin` and `stdin_file` are mutually exclusive.
+
+`depends_on` accepts both enum literals and strings:
+- **Enum literals:** `.myapp` resolves to the install step for artifact `myapp`
+- **Strings:** `"test:unit"`, `"fmt"`, or `"gen:prep"` resolve to a top-level step by exact name
+- **Legacy bare artifact strings:** `"myapp"` still resolve to the artifact install step if an artifact with that name exists
+
+Manual top-level steps must be created with `b.step(...)` before calling `configureBuild`.
 
 ## `options_modules`
 
@@ -336,9 +344,9 @@ zbuild validates in two phases:
 
 Compile-time validation covers:
 
-- `root_module` enum/string references must point to a declared module
-- `depends_on` entries: plain names (`.mylib`) reference artifact install steps; colon-form strings (`"test:unit"`, `"cmd:deploy"`) reference any named step
-- `imports` syntax and dependency base names
+- `root_module` enum references must point to a declared module; bare string refs may defer to manual `b.addModule(...)` modules
+- `depends_on` enum references and manifest-owned step names; external manual steps are resolved later from `b.top_level_steps`
+- `imports` syntax, local/dependency references, and dependency base names; bare string imports may defer to manual `b.addModule(...)` modules
 - `link_libraries` syntax and dependency base names
 - dependency-backed LazyPath syntax (`"dep:path"` / `"dep:wf_name:path"`)
 - target strings on modules
@@ -346,6 +354,8 @@ Compile-time validation covers:
 
 Configure-time validation covers:
 
+- manual modules referenced from `root_module` and `imports`
+- manual or aggregate top-level steps referenced from `depends_on`
 - dependency default modules and sub-modules referenced from `imports`
 - dependency artifacts referenced from `link_libraries`
 - dependency named lazy paths and named `WriteFile` steps referenced from LazyPath fields

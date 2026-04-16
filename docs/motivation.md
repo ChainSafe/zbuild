@@ -77,7 +77,7 @@ zbuild eliminates the repetitive wiring. You declare what you want; the compiler
 
 ## What zbuild is NOT
 
-zbuild is not a replacement for `build.zig`. It handles the declarative 90% — the static build graph that most projects need. For conditional logic, platform-specific targets, or custom build steps, write that code in `build.zig` alongside the `configureBuild` call. Since zbuild takes `*std.Build` and returns, you can do anything before or after it.
+zbuild is not a replacement for `build.zig`. It handles the declarative 90% — the static build graph that most projects need. For conditional logic, platform-specific targets, or custom build steps, write that code in `build.zig` alongside the `configureBuild` call. Since zbuild takes `*std.Build` and returns, you can do anything before or after it. If the manifest needs to reference a manual module or top-level step, create it before calling `configureBuild`.
 
 The escape hatch is always there.
 

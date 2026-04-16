@@ -124,7 +124,7 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: 
     try runner.wireAllImports(manifest);
 
     // Phase 11: Wire depends_on
-    runner.wireDependsOn(manifest);
+    try runner.wireDependsOn(manifest);
 
     // Phase 12: Add help step
     if (opts.help_step) |step_name| {
@@ -152,8 +152,9 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: 
 
 // --- Manifest validation ---
 //
-// Cross-reference checks run at comptime so typos in module names,
-// dependency references, and artifact names become compile errors.
+// Cross-reference checks run at comptime for manifest-owned targets so typos in
+// local module names, dependency references, and artifact names become compile
+// errors. Manual build.zig modules and steps are validated during configure.
 
 fn validateManifest(comptime manifest: anytype) void {
     validateInlineModuleNames(manifest);
@@ -248,41 +249,75 @@ fn inlineRootModuleName(comptime artifact_name: []const u8, comptime root_module
 
 fn validateRootModuleRef(comptime manifest: anytype, comptime root_module: anytype, comptime section: []const u8, comptime name: []const u8) void {
     const ti = @typeInfo(@TypeOf(root_module));
+    if (ti == .@"struct") return; // inline module, nothing to cross-reference
+
     const ref_name = if (ti == .enum_literal)
         @tagName(root_module)
     else if (ti == .pointer)
         @as([]const u8, root_module)
     else
-        return; // struct = inline module, nothing to cross-reference
+        @compileError("root_module must be a string, enum literal, or struct");
 
-    if (!hasModule(manifest, ref_name)) {
-        @compileError(section ++ " '" ++ name ++ "': root_module references unknown module '" ++ ref_name ++ "'");
+    if (ti == .enum_literal) {
+        if (!hasModule(manifest, ref_name)) {
+            @compileError(section ++ " '" ++ name ++ "': root_module references unknown module '" ++ ref_name ++ "'");
+        }
+        return;
     }
+
+    if (hasModule(manifest, ref_name)) return;
+    if (countSeparators(ref_name, ':') == 0) return; // manual b.addModule() module resolved at configure time
+
+    @compileError(section ++ " '" ++ name ++ "': root_module references unknown module '" ++ ref_name ++ "'");
 }
 
 fn validateDependsOn(comptime manifest: anytype, comptime deps: anytype, comptime section: []const u8, comptime name: []const u8) void {
     inline for (@typeInfo(@TypeOf(deps)).@"struct".fields) |field| {
-        const dep_name = toComptimeString(@field(deps, field.name));
-        if (comptime std.mem.indexOfScalar(u8, dep_name, ':') != null) {
-            // Explicit step reference: "prefix:artifact_name"
-            if (!hasStepTarget(manifest, dep_name)) {
-                @compileError(section ++ " '" ++ name ++ "': depends_on references unknown step '" ++ dep_name ++ "'");
-            }
-        } else {
-            // Plain name: references an artifact's install step
+        const raw = @field(deps, field.name);
+        const ti = @typeInfo(@TypeOf(raw));
+        const dep_name = toComptimeString(raw);
+
+        if (ti == .enum_literal) {
             if (!hasArtifact(manifest, dep_name)) {
                 @compileError(section ++ " '" ++ name ++ "': depends_on references unknown artifact '" ++ dep_name ++ "'");
             }
+            continue;
         }
+
+        if (ti != .pointer) {
+            @compileError(section ++ " '" ++ name ++ "': depends_on entries must be strings or enum literals");
+        }
+
+        if (dep_name.len == 0) {
+            @compileError(section ++ " '" ++ name ++ "': depends_on cannot contain an empty step reference");
+        }
+
+        if (countSeparators(dep_name, ':') == 0 and hasArtifact(manifest, dep_name)) {
+            continue; // legacy bare-string artifact reference
+        }
+
+        if (hasStepTarget(manifest, dep_name)) {
+            continue; // manifest-owned top-level step
+        }
+
+        // Any remaining string is a manual or aggregate top-level step that will
+        // be resolved from b.top_level_steps during configure.
     }
 }
 
 fn validateImports(comptime manifest: anytype, comptime imports: anytype, comptime section: []const u8, comptime name: []const u8) void {
     inline for (@typeInfo(@TypeOf(imports)).@"struct".fields) |field| {
-        const import_name = toComptimeString(@field(imports, field.name));
-        if (!isImportable(manifest, import_name)) {
-            @compileError(section ++ " '" ++ name ++ "': import references unknown target '" ++ import_name ++ "'");
+        const raw = @field(imports, field.name);
+        const ti = @typeInfo(@TypeOf(raw));
+        const import_name = toComptimeString(raw);
+
+        if (isImportable(manifest, import_name)) continue;
+
+        if (ti == .pointer and countSeparators(import_name, ':') == 0) {
+            continue; // manual b.addModule() module resolved at configure time
         }
+
+        @compileError(section ++ " '" ++ name ++ "': import references unknown target '" ++ import_name ++ "'");
     }
 }
 
@@ -651,7 +686,7 @@ const BuildRunner = struct {
 
         if (@hasField(@TypeOf(manifest), "modules")) {
             inline for (@typeInfo(@TypeOf(manifest.modules)).@"struct".fields) |field| {
-                failed = self.validateResolvedModuleDefinition("modules", field.name, @field(manifest.modules, field.name)) or failed;
+                failed = self.validateResolvedModuleDefinition(manifest, "modules", field.name, @field(manifest.modules, field.name)) or failed;
             }
         }
 
@@ -661,7 +696,7 @@ const BuildRunner = struct {
                     const item = @field(@field(manifest, section), field.name);
                     failed = self.validateResolvedArtifactFields(section, field.name, item) or failed;
                     if (@typeInfo(@TypeOf(item.root_module)) == .@"struct") {
-                        failed = self.validateResolvedModuleDefinition(section, field.name, item.root_module) or failed;
+                        failed = self.validateResolvedModuleDefinition(manifest, section, field.name, item.root_module) or failed;
                     }
                 }
             }
@@ -682,12 +717,12 @@ const BuildRunner = struct {
         return failed;
     }
 
-    fn validateResolvedModuleDefinition(self: *BuildRunner, comptime section: []const u8, comptime name: []const u8, comptime mod: anytype) bool {
+    fn validateResolvedModuleDefinition(self: *BuildRunner, comptime manifest: anytype, comptime section: []const u8, comptime name: []const u8, comptime mod: anytype) bool {
         var failed = false;
         const Mod = @TypeOf(mod);
 
         if (@hasField(Mod, "imports"))
-            failed = self.validateResolvedImports(mod.imports, section, name) or failed;
+            failed = self.validateResolvedImports(manifest, mod.imports, section, name) or failed;
         if (@hasField(Mod, "link_libraries"))
             failed = self.validateResolvedLinkLibraries(mod.link_libraries, section, name) or failed;
         if (@hasField(Mod, "root_source_file"))
@@ -713,12 +748,20 @@ const BuildRunner = struct {
         return failed;
     }
 
-    fn validateResolvedImports(self: *BuildRunner, comptime imports: anytype, comptime section: []const u8, comptime name: []const u8) bool {
+    fn validateResolvedImports(self: *BuildRunner, comptime manifest: anytype, comptime imports: anytype, comptime section: []const u8, comptime name: []const u8) bool {
         var failed = false;
 
         inline for (@typeInfo(@TypeOf(imports)).@"struct".fields) |field| {
             const import_name = comptime toComptimeString(@field(imports, field.name));
-            if (self.result.modules.get(import_name) == null and self.result.options_modules.get(import_name) == null) {
+            const is_local_module = comptime hasModule(manifest, import_name);
+            const is_options_module = comptime blk: {
+                if (@hasField(@TypeOf(manifest), "options_modules")) {
+                    break :blk @hasField(@TypeOf(manifest.options_modules), import_name);
+                }
+                break :blk false;
+            };
+
+            if (!is_local_module and !is_options_module) {
                 const dep_name = comptimeBaseName(import_name);
                 if (self.result.dependencies.get(dep_name)) |dep| {
                     const module_name = if (countSeparators(import_name, ':') == 0) import_name else comptimeAfterSep(import_name);
@@ -733,6 +776,15 @@ const BuildRunner = struct {
                         });
                         failed = true;
                     }
+                } else if (countSeparators(import_name, ':') == 0 and self.b.modules.get(import_name) != null) {
+                    // manual module registered before configureBuild
+                } else {
+                    self.invalidateManifest("import '{s}' in {s} '{s}' could not resolve a zbuild module, dependency module, or manual module registered before configureBuild", .{
+                        import_name,
+                        section,
+                        name,
+                    });
+                    failed = true;
                 }
             }
         }
@@ -925,10 +977,12 @@ const BuildRunner = struct {
             };
         } else if (ti == .pointer) {
             const str: []const u8 = link;
-            return self.result.modules.get(str) orelse {
-                std.log.err("zbuild: module '{s}' not found", .{str});
-                return error.ModuleNotFound;
-            };
+            if (self.result.modules.get(str)) |module| return module;
+            if (countSeparators(str, ':') == 0) {
+                if (self.b.modules.get(str)) |module| return module;
+            }
+            self.invalidateManifest("root_module '{s}' could not resolve a zbuild module or manual module registered before configureBuild", .{str});
+            return error.ModuleNotFound;
         } else if (ti == .@"struct") {
             const mod_name = inlineRootModuleName(name, link);
             return try self.createModule(link, mod_name, &self.inline_modules);
@@ -1433,7 +1487,7 @@ const BuildRunner = struct {
 
     // --- depends_on wiring ---
 
-    fn wireDependsOn(self: *BuildRunner, comptime manifest: anytype) void {
+    fn wireDependsOn(self: *BuildRunner, comptime manifest: anytype) Error!void {
         // Artifacts: wire install step
         inline for (.{ "executables", "libraries", "objects" }) |section| {
             if (@hasField(@TypeOf(manifest), section)) {
@@ -1441,7 +1495,7 @@ const BuildRunner = struct {
                     const item = @field(@field(manifest, section), field.name);
                     if (@hasField(@TypeOf(item), "depends_on")) {
                         if (self.install_steps.get(field.name)) |this_step| {
-                            self.wireDependsOnList(this_step, item.depends_on);
+                            try self.wireDependsOnList(this_step, item.depends_on);
                         }
                     }
                 }
@@ -1453,7 +1507,7 @@ const BuildRunner = struct {
                 const item = @field(manifest.tests, field.name);
                 if (@hasField(@TypeOf(item), "depends_on")) {
                     if (self.b.top_level_steps.get(self.b.fmt("test:{s}", .{field.name}))) |tls| {
-                        self.wireDependsOnList(&tls.step, item.depends_on);
+                        try self.wireDependsOnList(&tls.step, item.depends_on);
                     }
                 }
             }
@@ -1464,26 +1518,33 @@ const BuildRunner = struct {
                 const run = @field(manifest.runs, field.name);
                 if (@hasField(@TypeOf(run), "cmd") and @hasField(@TypeOf(run), "depends_on")) {
                     if (self.b.top_level_steps.get(self.b.fmt("cmd:{s}", .{field.name}))) |tls| {
-                        self.wireDependsOnList(&tls.step, run.depends_on);
+                        try self.wireDependsOnList(&tls.step, run.depends_on);
                     }
                 }
             }
         }
     }
 
-    fn wireDependsOnList(self: *BuildRunner, step: *std.Build.Step, comptime deps: anytype) void {
+    fn wireDependsOnList(self: *BuildRunner, step: *std.Build.Step, comptime deps: anytype) Error!void {
         inline for (@typeInfo(@TypeOf(deps)).@"struct".fields) |field| {
-            const dep_name = comptime toComptimeString(@field(deps, field.name));
-            const dep_step = if (comptime std.mem.indexOfScalar(u8, dep_name, ':') != null)
-                // Explicit step reference: look up by full step name
-                if (self.b.top_level_steps.get(dep_name)) |tls| &tls.step else null
-            else
-                // Plain name: look up install step
-                self.install_steps.get(dep_name);
+            const raw = @field(deps, field.name);
+            const dep_name = comptime toComptimeString(raw);
+            const dep_step = switch (@typeInfo(@TypeOf(raw))) {
+                .enum_literal => self.install_steps.get(dep_name),
+                .pointer => blk: {
+                    if (countSeparators(dep_name, ':') == 0) {
+                        if (self.install_steps.get(dep_name)) |artifact_step| break :blk artifact_step;
+                    }
+                    if (self.b.top_level_steps.get(dep_name)) |tls| break :blk &tls.step;
+                    break :blk null;
+                },
+                else => @compileError("depends_on entries must be strings or enum literals"),
+            };
             if (dep_step) |s| {
                 step.dependOn(s);
             } else {
-                std.log.warn("zbuild: depends_on references unknown step '{s}'", .{dep_name});
+                self.invalidateManifest("depends_on reference '{s}' could not resolve an artifact install step or top-level step registered before configureBuild", .{dep_name});
+                return error.ModuleNotFound;
             }
         }
     }
@@ -1505,7 +1566,10 @@ const BuildRunner = struct {
             });
             return error.ModuleNotFound;
         }
-        std.log.err("zbuild: unresolved import '{s}'", .{import_name});
+        if (countSeparators(import_name, ':') == 0) {
+            if (self.b.modules.get(import_name)) |module| return module;
+        }
+        self.invalidateManifest("unresolved import '{s}' (expected a zbuild module, dependency module, or manual module registered before configureBuild)", .{import_name});
         return error.ModuleNotFound;
     }
 
@@ -1856,6 +1920,34 @@ test "validateManifest accepts step references in depends_on" {
             .deploy = .{
                 .cmd = .{"./deploy.sh"},
                 .depends_on = .{ .myapp, "test:unit" },
+            },
+        },
+    });
+}
+
+test "validateManifest accepts manual build.zig interop placeholders" {
+    comptime validateManifest(.{
+        .name = .myproject,
+        .version = "0.1.0",
+        .fingerprint = 0x1234,
+        .minimum_zig_version = "0.16.0",
+        .paths = .{"."},
+        .modules = .{
+            .core = .{
+                .root_source_file = "src/core.zig",
+                .imports = .{"shared"},
+            },
+        },
+        .executables = .{
+            .myapp = .{
+                .root_module = "shared",
+                .depends_on = .{"gen:prep"},
+            },
+        },
+        .runs = .{
+            .deploy = .{
+                .cmd = .{"./deploy.sh"},
+                .depends_on = .{"gen:prep"},
             },
         },
     });
