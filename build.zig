@@ -136,6 +136,12 @@ pub fn build(b: *std.Build) void {
         .stderr_match = "could not resolve named lazy path 'missing' from dependency 'dep_pkg'",
     });
     addFixtureCommand(b, tls_test_fixtures, .{
+        .name = "duplicate-installable-artifact-name",
+        .cwd = "test/fixtures/duplicate_installable_artifact_name",
+        .expect_exit = 2,
+        .stderr_match = "installable artifact names must be unique",
+    });
+    addFixtureCommand(b, tls_test_fixtures, .{
         .name = "stdlib-passthrough-library",
         .cwd = "test/fixtures/stdlib_passthrough",
         .build_args = &.{"build-lib:mylib"},

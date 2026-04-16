@@ -229,8 +229,10 @@ Struct with `cmd` plus optional fields:
 
 `depends_on` accepts both enum literals and strings:
 - **Enum literals:** `.myapp` resolves to the install step for artifact `myapp`
-- **Strings with zbuild-owned names:** `"test:unit"` or `"fmt"` resolve to manifest-owned top-level steps by exact name
+- **Strings with zbuild-owned names:** `"run:myapp"`, `"test:unit"`, `"cmd:demo"`, or `"fmt"` resolve to exact manifest-owned top-level steps
 - **Other strings:** `"gen:prep"` resolves to a manual top-level step created before `configureBuild`
+
+Installable artifact names across `executables`, `libraries`, and `objects` must be unique. This keeps enum-literal shorthand unambiguous: `.myapp` always means exactly one artifact install step.
 
 Manual top-level steps must be created with `b.step(...)` before calling `configureBuild`.
 
@@ -352,11 +354,12 @@ zbuild validates in two phases:
 
 Compile-time validation covers:
 
-- `root_module` enum references, named-module strings, and explicit external module refs
-- `depends_on` enum references, manifest-owned step names, and explicit external step refs
-- `imports` syntax, local/dependency references, and explicit external manual module refs
+- `root_module` enum references, manual-module strings, and dependency-module strings
+- `depends_on` enum artifact refs and manifest-owned step names
+- `imports` syntax, zbuild-owned enum refs, dependency-module strings, and manual-module strings
 - `link_libraries` syntax and dependency base names
 - semantic version strings on executables and libraries
+- unique installable artifact names across `executables`, `libraries`, and `objects`
 - dependency-backed LazyPath syntax (`"dep:path"` / `"dep:wf_name:path"`)
 - target strings on modules
 - `stdin` and `stdin_file` on the same run are mutually exclusive

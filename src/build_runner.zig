@@ -164,6 +164,7 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: 
 
 fn validateManifest(comptime manifest: anytype, comptime opts: Options) void {
     validateInlineModuleNames(manifest);
+    validateUniqueInstallableArtifactNames(manifest);
 
     // Validate artifact sections: root_module refs, depends_on, and inline module imports
     inline for (.{ "executables", "libraries", "objects", "tests" }) |section| {
@@ -313,6 +314,25 @@ fn validateInlineModuleNames(comptime manifest: anytype) void {
                     if (comptime std.mem.eql(u8, inline_name, other_name)) {
                         @compileError(section ++ " '" ++ field.name ++ "': inline root_module name '" ++ inline_name ++ "' collides with " ++ other_section ++ " '" ++ other_field.name ++ "'");
                     }
+                }
+            }
+        }
+    }
+}
+
+fn validateUniqueInstallableArtifactNames(comptime manifest: anytype) void {
+    const sections = .{ "executables", "libraries", "objects" };
+
+    inline for (sections, 0..) |section, i| {
+        if (!@hasField(@TypeOf(manifest), section)) continue;
+
+        const items = @field(manifest, section);
+        inline for (@typeInfo(@TypeOf(items)).@"struct".fields) |field| {
+            inline for (sections, 0..) |other_section, j| {
+                if (j <= i) continue;
+                if (!@hasField(@TypeOf(manifest), other_section)) continue;
+                if (@hasField(@TypeOf(@field(manifest, other_section)), field.name)) {
+                    @compileError(section ++ " '" ++ field.name ++ "': artifact name '" ++ field.name ++ "' collides with " ++ other_section ++ " '" ++ field.name ++ "'; installable artifact names must be unique because depends_on shorthand ." ++ field.name ++ " resolves to one artifact install step");
                 }
             }
         }
