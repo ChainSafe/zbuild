@@ -47,11 +47,11 @@ Format: `"dep_name"` or `"dep_name:artifact_name"`. Resolves a library artifact 
 ### `imports` syntax
 
 Import entries can reference:
-- **Named modules:** `.core` or `"core"`
+- **Named modules:** `.core`
 - **Options modules:** `.config`
-- **Dependencies:** `.zlib` (imports the dependency's default module)
+- **Dependency default modules:** `.zlib`
 - **Dependency sub-modules:** `"zlib:zlib"` (imports a specific module from a dependency)
-- **Manual modules:** `.{ .external_module = "shared" }` resolved from `b.addModule(...)` before `configureBuild`
+- **Manual modules:** `"shared"` resolved from `b.addModule(...)` before `configureBuild`
 
 ## `executables`
 
@@ -71,16 +71,15 @@ Build targets that produce executable binaries. Each entry creates `build-exe:<n
 The `root_module` field accepts four forms:
 
 1. **Enum literal** — references a named zbuild module: `.root_module = .core`
-2. **String** — references a named zbuild module: `.root_module = "core"`
-3. **External module struct** — references a manual `b.addModule(...)` module registered before `configureBuild`:
+2. **String** — references a manual `b.addModule(...)` module registered before `configureBuild`:
    ```zig
-   .root_module = .{ .external_module = "shared" }
+   .root_module = "shared"
    ```
-4. **Inline struct** — defines the module inline, with an optional `name` override:
+3. **Inline struct** — defines the module inline, with an optional `name` override:
    ```zig
    .root_module = .{
        .root_source_file = "src/main.zig",
-       .imports = .{ .core, .config, .{ .external_module = "shared" } },
+       .imports = .{ .core, .config, "shared" },
        .name = "custom_name",  // optional: internal inline-module name used for import wiring
    },
    ```
@@ -228,9 +227,8 @@ Struct with `cmd` plus optional fields:
 
 `depends_on` accepts both enum literals and strings:
 - **Enum literals:** `.myapp` resolves to the install step for artifact `myapp`
-- **Strings:** `"test:unit"` or `"fmt"` resolve to manifest-owned top-level steps by exact name
-- **External steps:** `.{ .external_step = "gen:prep" }` resolves to a manual top-level step by exact name
-- **Legacy bare artifact strings:** `"myapp"` still resolve to the artifact install step if an artifact with that name exists
+- **Strings with zbuild-owned names:** `"test:unit"` or `"fmt"` resolve to manifest-owned top-level steps by exact name
+- **Other strings:** `"gen:prep"` resolves to a manual top-level step created before `configureBuild`
 
 Manual top-level steps must be created with `b.step(...)` before calling `configureBuild`.
 
