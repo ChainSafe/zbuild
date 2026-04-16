@@ -905,28 +905,47 @@ fn isInlineRootModuleType(comptime T: type) bool {
 }
 
 fn hasStepTarget(comptime manifest: anytype, comptime step_ref: []const u8) bool {
-    const prefix = comptimeBaseName(step_ref);
-    const target_name = comptimeAfterSep(step_ref);
-
-    // Map step prefixes to manifest sections
-    const mapping = .{
-        .{ "build-exe", "executables" },
-        .{ "build-lib", "libraries" },
-        .{ "build-obj", "objects" },
-        .{ "build-test", "tests" },
-        .{ "run", "executables" },
-        .{ "test", "tests" },
-        .{ "cmd", "runs" },
-        .{ "fmt", "fmts" },
-    };
-
-    inline for (mapping) |entry| {
-        if (comptime std.mem.eql(u8, prefix, entry[0])) {
-            if (@hasField(@TypeOf(manifest), entry[1])) {
-                if (@hasField(@TypeOf(@field(manifest, entry[1])), target_name)) return true;
-            }
-            return false;
+    if (comptime std.mem.startsWith(u8, step_ref, "build-exe:") or std.mem.startsWith(u8, step_ref, "run:")) {
+        const target_name = comptimeAfterSep(step_ref);
+        if (@hasField(@TypeOf(manifest), "executables")) {
+            return @hasField(@TypeOf(manifest.executables), target_name);
         }
+        return false;
+    }
+    if (comptime std.mem.startsWith(u8, step_ref, "build-lib:")) {
+        const target_name = comptimeAfterSep(step_ref);
+        if (@hasField(@TypeOf(manifest), "libraries")) {
+            return @hasField(@TypeOf(manifest.libraries), target_name);
+        }
+        return false;
+    }
+    if (comptime std.mem.startsWith(u8, step_ref, "build-obj:")) {
+        const target_name = comptimeAfterSep(step_ref);
+        if (@hasField(@TypeOf(manifest), "objects")) {
+            return @hasField(@TypeOf(manifest.objects), target_name);
+        }
+        return false;
+    }
+    if (comptime std.mem.startsWith(u8, step_ref, "build-test:") or std.mem.startsWith(u8, step_ref, "test:")) {
+        const target_name = comptimeAfterSep(step_ref);
+        if (@hasField(@TypeOf(manifest), "tests")) {
+            return @hasField(@TypeOf(manifest.tests), target_name);
+        }
+        return false;
+    }
+    if (comptime std.mem.startsWith(u8, step_ref, "cmd:")) {
+        const target_name = comptimeAfterSep(step_ref);
+        if (@hasField(@TypeOf(manifest), "runs")) {
+            return @hasField(@TypeOf(manifest.runs), target_name);
+        }
+        return false;
+    }
+    if (comptime std.mem.startsWith(u8, step_ref, "fmt:")) {
+        const target_name = comptimeAfterSep(step_ref);
+        if (@hasField(@TypeOf(manifest), "fmts")) {
+            return @hasField(@TypeOf(manifest.fmts), target_name);
+        }
+        return false;
     }
     return false;
 }
@@ -1096,7 +1115,7 @@ const BuildRunner = struct {
                 inline for (@typeInfo(@TypeOf(@field(manifest, section))).@"struct".fields) |field| {
                     const item = @field(@field(manifest, section), field.name);
                     failed = self.validateResolvedArtifactFields(section, field.name, item) or failed;
-                    if (isInlineRootModuleType(@TypeOf(item.root_module))) {
+                    if (comptime isInlineRootModuleType(@TypeOf(item.root_module))) {
                         failed = self.validateResolvedModuleDefinition(manifest, section, field.name, item.root_module) or failed;
                     }
                 }
@@ -1363,30 +1382,29 @@ const BuildRunner = struct {
                             });
                             failed = true;
                         }
-                        continue;
-                    }
-
-                    const dep_name = comptimeBaseName(import_name);
-                    const module_name = comptimeAfterSep(import_name);
-                    if (self.result.dependencies.get(dep_name)) |dep| {
-                        if (dep.builder.modules.get(module_name) == null) {
-                            self.invalidateManifest("dependency import '{s}' in {s} '{s}' could not resolve module '{s}' from dependency '{s}'", .{
+                    } else {
+                        const dep_name = comptimeBaseName(import_name);
+                        const module_name = comptimeAfterSep(import_name);
+                        if (self.result.dependencies.get(dep_name)) |dep| {
+                            if (dep.builder.modules.get(module_name) == null) {
+                                self.invalidateManifest("dependency import '{s}' in {s} '{s}' could not resolve module '{s}' from dependency '{s}'", .{
+                                    import_name,
+                                    section,
+                                    name,
+                                    module_name,
+                                    dep_name,
+                                });
+                                failed = true;
+                            }
+                        } else {
+                            self.invalidateManifest("dependency import '{s}' in {s} '{s}' references missing dependency '{s}'", .{
                                 import_name,
                                 section,
                                 name,
-                                module_name,
                                 dep_name,
                             });
                             failed = true;
                         }
-                    } else {
-                        self.invalidateManifest("dependency import '{s}' in {s} '{s}' references missing dependency '{s}'", .{
-                            import_name,
-                            section,
-                            name,
-                            dep_name,
-                        });
-                        failed = true;
                     }
                 },
                 else => unreachable,
@@ -2041,8 +2059,8 @@ const BuildRunner = struct {
             if (@hasField(@TypeOf(manifest), section)) {
                 inline for (@typeInfo(@TypeOf(@field(manifest, section))).@"struct".fields) |field| {
                     const item = @field(@field(manifest, section), field.name);
-                    if (isInlineRootModuleType(@TypeOf(item.root_module))) {
-                        if (@hasField(@TypeOf(item.root_module), "imports")) {
+                    if (comptime isInlineRootModuleType(@TypeOf(item.root_module))) {
+                        if (comptime @hasField(@TypeOf(item.root_module), "imports")) {
                             const mod_name = inlineRootModuleName(field.name, item.root_module);
                             if (self.inline_modules.get(mod_name)) |m| {
                                 try self.wireModuleImports(m, item.root_module.imports);

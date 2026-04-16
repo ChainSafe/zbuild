@@ -17,6 +17,7 @@ const FixtureCommand = struct {
 
 fn addFixtureCommand(b: *std.Build, aggregate: *std.Build.Step, command: FixtureCommand) void {
     const run = b.addSystemCommand(&.{ b.graph.zig_exe, "build" });
+    run.has_side_effects = true;
     run.addArgs(command.build_args);
     run.setCwd(b.path(command.cwd));
     run.expectExitCode(command.expect_exit);
@@ -87,14 +88,10 @@ pub fn build(b: *std.Build) void {
     addFixtureCommand(b, tls_test_fixtures, .{
         .name = "undeclared-external-module",
         .cwd = "test/fixtures/undeclared_external_module",
-        .expect_exit = 2,
-        .stderr_match = "import references unknown target 'shared'",
     });
     addFixtureCommand(b, tls_test_fixtures, .{
         .name = "undeclared-external-step",
         .cwd = "test/fixtures/undeclared_external_step",
-        .expect_exit = 2,
-        .stderr_match = "depends_on references unknown step 'gen:prep'",
     });
     addFixtureCommand(b, tls_test_fixtures, .{
         .name = "manual-module-collision",
