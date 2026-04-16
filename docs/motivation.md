@@ -1,86 +1,60 @@
 # Why zbuild?
 
-## The problem
+zbuild exists for a specific kind of Zig project:
 
-Zig's build system is powerful — it's a full programming environment written in Zig itself. But that power comes with verbosity. Adding a single executable with install, run, and test steps requires ~25 lines of boilerplate. Multiply by N targets, wire in dependencies and modules, and the `build.zig` file becomes a maintenance burden.
+- the build graph is mostly static
+- the same `std.Build` patterns repeat across many targets
+- the team wants earlier, clearer failures than "some code in `build.zig` did the wrong thing"
 
-For newcomers, `build.zig` is one of the steepest parts of learning Zig. The build API is large, the patterns are repetitive, and small mistakes produce confusing errors.
+It is not trying to remove Zig from the build story. It is trying to remove repetitive graph wiring from the parts that are already declarative in practice.
 
-## The insight
+## The problem it attacks
 
-Zig's `@import("build.zig.zon")` gives comptime access to the project manifest as a typed anonymous struct. This changes everything:
+Zig's build system is powerful because it is just Zig. That is also the source of the friction:
 
-- **The compiler is the parser.** No runtime ZON parsing, no custom IR, no serialization.
-- **The type system is the schema.** Invalid field types are caught by the compiler.
-- **Validation splits cleanly by what is actually knowable.** Local manifest structure fails at comptime; dependency exports are validated immediately after dependency loading, before the build graph runs.
-- **`inline for` over struct fields** generates specialized code per manifest entry. Zero runtime overhead.
+- a small executable often turns into a surprising amount of `build.zig`
+- adding tests, runs, install steps, and module wiring scales linearly in boilerplate
+- newcomers must learn a large API before they can express a simple graph
 
-## Before and after
+For a lot of projects, that is the wrong abstraction level. The graph is static. The code is just encoding structure.
 
-A typical `build.zig` for one executable with tests:
+## The design bet
 
-```zig
-const std = @import("std");
-pub fn build(b: *std.Build) void {
-    const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
+zbuild makes one strong bet:
 
-    const module = b.addModule("myapp", .{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
+> `build.zig.zon` plus comptime is already enough structure to describe most static build graphs.
 
-    const exe = b.addExecutable(.{ .name = "myapp", .root_module = module });
-    const install = b.addInstallArtifact(exe, .{});
-    b.step("build-exe:myapp", "Install myapp").dependOn(&install.step);
-    b.getInstallStep().dependOn(&install.step);
+That bet only works because Zig already gives zbuild the important pieces:
 
-    const run = b.addRunArtifact(exe);
-    if (b.args) |args| run.addArgs(args);
-    b.step("run:myapp", "Run myapp").dependOn(&run.step);
+- `@import("build.zig.zon")` returns a typed value at comptime
+- `std.Build` is the real backend
+- `build.zig` remains available for everything dynamic
 
-    const test_exe = b.addTest(.{ .name = "myapp", .root_module = module });
-    const run_test = b.addRunArtifact(test_exe);
-    b.step("test:myapp", "Run myapp tests").dependOn(&run_test.step);
-}
-```
+So zbuild does not need a runtime parser, a custom IR, or a replacement toolchain. It only needs a coherent manifest surface and a disciplined translation into `std.Build`.
 
-With zbuild, the same thing is declared in `build.zig.zon` alongside your normal project metadata:
+## What zbuild optimizes for
 
-```zig
-.executables = .{
-    .myapp = .{
-        .root_module = .{ .root_source_file = "src/main.zig" },
-    },
-},
-.tests = .{
-    .myapp = .{
-        .root_module = .{ .root_source_file = "src/main.zig" },
-    },
-},
-```
+zbuild is trying to maximize four things at once:
 
-And `build.zig` becomes:
+- **Terseness** for the common static graph cases
+- **Coherence** through explicit ownership and naming rules
+- **Early failure** for manifest-owned mistakes
+- **Interop** with manual `build.zig` code when the graph stops being static
 
-```zig
-const zbuild = @import("zbuild");
-const std = @import("std");
+That is why the library uses syntax splits like enum literals vs strings instead of trying to infer intent from arbitrary names. The API is smaller and more learnable when "what kind of thing is this?" has a visible answer.
 
-pub fn build(b: *std.Build) void {
-    zbuild.configureBuild(b, @import("build.zig.zon"), .{}) catch |err|
-        std.log.err("zbuild: {}", .{err});
-}
-```
+## What it does not try to be
 
-zbuild eliminates the repetitive wiring. You declare what you want; the compiler generates the build graph.
+zbuild is not:
 
-## What zbuild is NOT
+- a replacement for `build.zig`
+- a universal abstraction over every `std.Build` feature
+- a promise that all validation can happen at comptime
 
-zbuild is not a replacement for `build.zig`. It handles the declarative 90% — the static build graph that most projects need. For conditional logic, platform-specific targets, or custom build steps, write that code in `build.zig` alongside the `configureBuild` call. Since zbuild takes `*std.Build` and returns, you can do anything before or after it. Manifest refs are intentionally split by syntax: enum literals like `.core` and `.myapp` target zbuild-owned modules and artifacts, while bare strings like `"shared"` and `"gen:prep"` target manual modules and top-level steps registered before `configureBuild`.
+If you need platform-conditional logic, generated inputs, custom discovery, or one-off graph surgery, write that in `build.zig`. zbuild is meant to coexist with that code, not ban it.
 
-The escape hatch is always there.
+## How to read the docs
 
-## Inspiration
-
-zbuild draws from Cargo (`Cargo.toml`) and npm (`package.json`) — tools that let developers declare what to build rather than how to build it. Unlike those, zbuild doesn't replace the build system. It rides on top of Zig's native build system, generating the same `std.Build` calls you'd write by hand.
+- Start with the [README](../README.md) if you want the fastest path from zero to a working build.
+- Read [Conceptual Model](concepts.md) if you want the bottom-up explanation of namespaces, ownership, and validation phases.
+- Keep [Schema Reference](schema.md) open when you need exact field types and generated step names.

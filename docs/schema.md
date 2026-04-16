@@ -1,5 +1,7 @@
 # ZON Schema Reference
 
+This page is the bottom-most reference. If you are new to zbuild, read the [README](../README.md) first for the quickstart and [Conceptual Model](concepts.md) second for the mental model.
+
 This is the complete reference for zbuild's manifest fields. These fields are added to your standard `build.zig.zon` alongside Zig's own fields (`name`, `version`, `fingerprint`, `minimum_zig_version`, `paths`, `description`, `dependencies`).
 
 Unknown fields inside zbuild-owned sections are compile errors. Unknown top-level fields are left alone so Zig itself can evolve `build.zig.zon` without zbuild shadowing it.
@@ -70,7 +72,7 @@ Build targets that produce executable binaries. Each entry creates `build-exe:<n
 
 ### Root module forms
 
-The `root_module` field accepts four forms:
+The `root_module` field accepts three forms:
 
 1. **Enum literal** — references a named zbuild module: `.root_module = .core`
 2. **String** — references a manual `b.addModule(...)` module registered before `configureBuild`:
@@ -104,7 +106,6 @@ Inline root modules are not importable targets in the manifest. If provided, `ro
 | `use_lld` | bool | — | Use LLD linker |
 | `zig_lib_dir` | string | — | Custom Zig lib directory (LazyPath resolved) |
 | `win32_manifest` | string | — | Win32 manifest file (LazyPath resolved) |
-| `win32_module_definition` | string | — | Win32 module definition file (LazyPath resolved, libraries only) |
 
 ## `libraries`
 
@@ -122,6 +123,7 @@ Same fields as executables, plus `win32_module_definition` and `linker_allow_shl
 
 | Additional Field | Type | Default | Description |
 |------------------|------|---------|-------------|
+| `win32_module_definition` | string | — | Win32 module definition file (LazyPath resolved) |
 | `linker_allow_shlib_undefined` | bool | — | Allow undefined symbols in shared libs |
 
 ## `objects`
@@ -354,13 +356,12 @@ String paths in fields like `root_source_file`, `cwd`, `zig_lib_dir`, and `inclu
 zbuild validates in two phases:
 
 - **Compile time (`@compileError`)** for local graph structure and manifest syntax
-- **Configure time (hard build failure before graph execution)** for dependency exports that are only knowable after `b.dependency(...)` loads the dependency build graph
+- **Configure time (hard build failure before graph execution)** for manual and dependency state that is only knowable after `build.zig` and `b.dependency(...)` have run
 
 Compile-time validation covers:
 
-- `root_module` enum references, manual-module strings, and dependency-module strings
+- `root_module` and `imports` reference syntax, including manual-module strings, dependency-module strings, and zbuild-owned enum refs
 - `depends_on` enum artifact refs and manifest-owned step names
-- `imports` syntax, zbuild-owned enum refs, dependency-module strings, and manual-module strings
 - `link_libraries` syntax and dependency base names
 - semantic version strings on executables and libraries
 - unique installable artifact names across `executables`, `libraries`, and `objects`
@@ -387,7 +388,7 @@ The third argument to `configureBuild` is a comptime `Options` struct:
 ```zig
 zbuild.configureBuild(b, @import("build.zig.zon"), .{
     .help_step = "info",  // default: "help", null to disable
-}) catch |err| ...;
+});
 ```
 
 | Field | Type | Default | Description |

@@ -4,11 +4,8 @@
 //!
 //!     const zbuild = @import("zbuild");
 //!
-//!     pub fn build(b: *std.Build) void {
-//!         const result = zbuild.configureBuild(b, @import("build.zig.zon"), .{}) catch |err| {
-//!             std.log.err("zbuild: {}", .{err});
-//!             return;
-//!         };
+//!     pub fn build(b: *std.Build) !void {
+//!         _ = try zbuild.configureBuild(b, @import("build.zig.zon"), .{});
 //!     }
 
 const std = @import("std");

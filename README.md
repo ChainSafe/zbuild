@@ -1,45 +1,38 @@
 # zbuild
 
-Declarative build configuration for Zig projects.
+Declarative `std.Build` graphs generated from `build.zig.zon` at comptime.
 
-## What is zbuild?
+zbuild reads `@import("build.zig.zon")` as a typed value and turns it into normal `std.Build` calls. There is no runtime parser, and the graph is generated directly inside the build, not by an external codegen phase. It is a library that sits on top of Zig's native build graph.
 
-zbuild is a Zig library that configures your entire `std.Build` graph from the fields in your `build.zig.zon`. Using Zig's `@import("build.zig.zon")`, the compiler reads your manifest as a typed struct at comptime - no runtime parsing, no codegen, no intermediate representation. The build graph is generated directly by the compiler.
+## Start Here
 
-zbuild works alongside manual `build.zig` code. Use it for the declarative 90%, and write Zig for the rest. Manifest refs are intentionally split by syntax: enum literals like `.core` and `.myapp` target zbuild-owned modules and artifacts, while bare strings like `"shared"` and `"gen:prep"` target manual modules and top-level steps registered before `configureBuild`.
+- Want to try it immediately: use the quickstart below.
+- Want the mental model first: read [Conceptual Model](docs/concepts.md).
+- Want exact field-by-field details: read [Schema Reference](docs/schema.md).
+- Want the rationale and tradeoffs: read [Why zbuild?](docs/motivation.md).
 
-## Before and after
+## Quickstart
 
-Without zbuild, a single executable with install, run, and test steps requires ~25 lines of `build.zig`:
+### 1. Add zbuild as a dependency
+
+```bash
+zig fetch --save=zbuild <zbuild-url-or-path>
+```
+
+That writes the `.dependencies.zbuild` entry for you.
+
+### 2. Create `build.zig`
 
 ```zig
+const zbuild = @import("zbuild");
 const std = @import("std");
-pub fn build(b: *std.Build) void {
-    const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
 
-    const module = b.addModule("myapp", .{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const exe = b.addExecutable(.{ .name = "myapp", .root_module = module });
-    const install = b.addInstallArtifact(exe, .{});
-    b.step("build-exe:myapp", "Install myapp").dependOn(&install.step);
-    b.getInstallStep().dependOn(&install.step);
-
-    const run = b.addRunArtifact(exe);
-    if (b.args) |args| run.addArgs(args);
-    b.step("run:myapp", "Run myapp").dependOn(&run.step);
-
-    const test_exe = b.addTest(.{ .name = "myapp", .root_module = module });
-    const run_test = b.addRunArtifact(test_exe);
-    b.step("test:myapp", "Run myapp tests").dependOn(&run_test.step);
+pub fn build(b: *std.Build) !void {
+    _ = try zbuild.configureBuild(b, @import("build.zig.zon"), .{});
 }
 ```
 
-With zbuild, the same thing is declared in `build.zig.zon`:
+### 3. Add zbuild-owned fields to `build.zig.zon`
 
 ```zig
 .executables = .{
@@ -49,102 +42,100 @@ With zbuild, the same thing is declared in `build.zig.zon`:
         },
     },
 },
-.tests = .{
-    .myapp = .{
-        .root_module = .{
-            .root_source_file = "src/main.zig",
-        },
+```
+
+Assume the rest of `build.zig.zon` is the normal Zig package metadata from your project or `zig init`.
+
+### 4. Build it
+
+```bash
+zig build
+zig build run:myapp
+zig build help
+```
+
+### 5. Expand from there
+
+Once the first executable works, add modules, tests, runs, fmts, options modules, or libraries as needed. The [simple example](examples/simple/) shows the minimal shape. The [full example](examples/full/) shows most of the library in one place.
+
+## What zbuild gives you
+
+- `modules` for reusable Zig modules with imports, include paths, and dependency libraries
+- `executables`, `libraries`, and `objects`
+- `tests` with per-test steps and an aggregate `test` step
+- `fmts` with per-target steps and an aggregate `fmt` step
+- `runs` for arbitrary system commands
+- `options_modules` that become importable Zig config modules and `-Dmodule.option` CLI flags
+- comptime dependency args forwarded to `b.dependency(...)`
+- a built-in help step (`help` by default, configurable via `Options.help_step`)
+- two-phase validation so local graph mistakes fail early
+
+## First Mental Model
+
+zbuild becomes easy to use once you keep three rules in your head:
+
+1. `build.zig.zon` declares graph nodes.
+   `modules`, `executables`, `libraries`, `tests`, `runs`, and `fmts` each map to a different kind of `std.Build` node or step.
+
+2. Ownership is encoded in syntax.
+   Enum literals like `.core`, `.config`, and `.myapp` mean "this belongs to the zbuild-owned graph".
+   Bare strings like `"shared"` and `"gen:prep"` mean "this is manual `build.zig` state registered before `configureBuild`".
+
+3. Validation happens in two phases.
+   Local manifest structure and manifest-owned refs fail at comptime.
+   Manual refs and dependency exports fail during configure, after zbuild can actually inspect them.
+
+If you want the full model, including namespace rules and why those syntax splits exist, read [docs/concepts.md](docs/concepts.md).
+
+## Working With Manual `build.zig` Code
+
+zbuild does not replace `build.zig`. It owns the declarative 90%, and you keep Zig for the rest.
+
+Register manual modules or steps before `configureBuild`:
+
+```zig
+const zbuild = @import("zbuild");
+const std = @import("std");
+
+pub fn build(b: *std.Build) !void {
+    _ = b.addModule("shared", .{
+        .root_source_file = b.path("src/shared.zig"),
+        .target = b.resolveTargetQuery(.{}),
+        .optimize = .Debug,
+    });
+    _ = b.step("gen:prep", "manual prep step");
+
+    _ = try zbuild.configureBuild(b, @import("build.zig.zon"), .{});
+}
+```
+
+Then reference those manual nodes from the manifest with bare strings:
+
+```zig
+.executables = .{
+    .app = .{
+        .root_module = "shared",
+    },
+},
+.runs = .{
+    .demo = .{
+        .cmd = .{ "echo", "ok" },
+        .depends_on = .{ "gen:prep" },
     },
 },
 ```
 
-And your entire `build.zig` becomes:
+## Documentation Map
 
-```zig
-const zbuild = @import("zbuild");
-const std = @import("std");
-
-pub fn build(b: *std.Build) void {
-    zbuild.configureBuild(b, @import("build.zig.zon"), .{}) catch |err|
-        std.log.err("zbuild: {}", .{err});
-}
-```
-
-## Quickstart
-
-**1. Add zbuild as a dependency:**
-
-```bash
-zig fetch --save=zbuild <zbuild-url-or-path>
-```
-
-**2. Create `build.zig`:**
-
-```zig
-const zbuild = @import("zbuild");
-const std = @import("std");
-
-pub fn build(b: *std.Build) void {
-    zbuild.configureBuild(b, @import("build.zig.zon"), .{}) catch |err|
-        std.log.err("zbuild: {}", .{err});
-}
-```
-
-**3. Add zbuild fields to your `build.zig.zon`:**
-
-```zig
-.{
-    .name = .myproject,
-    .version = "0.1.0",
-    .fingerprint = 0xaabbccdd00112233,
-    .minimum_zig_version = "0.16.0",
-    .paths = .{ "build.zig", "build.zig.zon", "src" },
-    .dependencies = .{
-        .zbuild = .{ .path = "path/to/zbuild" },
-    },
-    .executables = .{
-        .myapp = .{
-            .root_module = .{
-                .root_source_file = "src/main.zig",
-            },
-        },
-    },
-}
-```
-
-**4. Build and run:**
-
-```bash
-zig build              # build all artifacts
-zig build run:myapp    # run the executable
-zig build test         # run all tests
-zig build help         # show project build info
-```
-
-## Features
-
-- **Modules** — reusable code units with imports, include paths, and library linking
-- **Executables** — with automatic install and run steps
-- **Libraries** — static/dynamic with version and linkage control
-- **Objects** — compiled object files
-- **Tests** — with filters and an aggregate `test` step
-- **Fmts** — `zig fmt` wrappers with path and exclusion control
-- **Runs** — system commands in short form (tuple) or long form (struct with env, cwd, stdin, depends_on)
-- **Options modules** — build-time options importable from Zig source code
-- **Dependency args** — forward comptime arguments to `b.dependency()` calls
-- **Two-phase validation** — local graph references fail at comptime; dependency exports and dependency-backed paths fail during configure before the build graph runs
-- **Built-in help step** — `zig build help` shows a formatted overview of your project (reads `name`, `version`, `description` from your manifest)
-
-## Documentation
-
-- **[Schema Reference](docs/schema.md)** — complete field-by-field reference for all zbuild manifest sections
-- **[Motivation](docs/motivation.md)** — why zbuild exists and how it works
-- **[Simple Example](examples/simple/)** — minimal project, one executable
-- **[Full Example](examples/full/)** — all features: modules, tests, runs, options, fmts
+- [Conceptual Model](docs/concepts.md): the bottom-up explanation of how the graph, namespaces, and validation fit together
+- [Schema Reference](docs/schema.md): exact field types, syntax, and generated step names
+- [Why zbuild?](docs/motivation.md): the problem it solves and the design constraints it follows
+- [Simple Example](examples/simple/): the smallest useful project
+- [Full Example](examples/full/): modules, tests, runs, fmts, and options modules together
 
 ## Requirements
 
-Zig 0.16.0+
+Zig `0.16.0+`
 
 ## License
 
