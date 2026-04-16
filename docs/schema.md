@@ -53,6 +53,8 @@ Import entries can reference:
 - **Dependency sub-modules:** `"zlib:zlib"` (imports a specific module from a dependency)
 - **Manual modules:** `"shared"` resolved from `b.addModule(...)` before `configureBuild`
 
+Named modules, options modules, and dependency default modules share one enum-literal import namespace. Duplicate names across those categories are rejected during `configureBuild`.
+
 ## `executables`
 
 Build targets that produce executable binaries. Each entry creates `build-exe:<name>` (install) and `run:<name>` (execute) steps.

@@ -574,7 +574,7 @@ fn artifactOptionsFieldBinding(comptime section: []const u8, comptime field_name
 
 fn copyModulePassthroughFields(comptime Mod: type, mod: Mod, opts: *std.Build.Module.CreateOptions) void {
     inline for (@typeInfo(Mod).@"struct".fields) |field| {
-        if (moduleCreateOptionsFieldBinding(field.name) == .passthrough) {
+        if (comptime moduleCreateOptionsFieldBinding(field.name) == .passthrough) {
             @field(opts.*, field.name) = @field(mod, field.name);
         }
     }
@@ -582,7 +582,7 @@ fn copyModulePassthroughFields(comptime Mod: type, mod: Mod, opts: *std.Build.Mo
 
 fn copyArtifactPassthroughFields(comptime section: []const u8, comptime Item: type, item: Item, opts: anytype) void {
     inline for (@typeInfo(Item).@"struct".fields) |field| {
-        if (artifactOptionsFieldBinding(section, field.name) == .passthrough) {
+        if (comptime artifactOptionsFieldBinding(section, field.name) == .passthrough) {
             @field(opts.*, field.name) = @field(item, field.name);
         }
     }
@@ -1120,8 +1120,8 @@ const BuildRunner = struct {
 
     fn validateNamespaceReservations(self: *BuildRunner, comptime manifest: anytype, comptime opts: Options) !bool {
         var failed = false;
-        var reserved_modules = std.StringHashMap([]const u8).init(self.b.allocator);
-        defer reserved_modules.deinit();
+        var reserved_imports = std.StringHashMap([]const u8).init(self.b.allocator);
+        defer reserved_imports.deinit();
         var reserved_steps = std.StringHashMap([]const u8).init(self.b.allocator);
         defer reserved_steps.deinit();
 
@@ -1129,8 +1129,29 @@ const BuildRunner = struct {
             inline for (@typeInfo(@TypeOf(manifest.modules)).@"struct".fields) |field| {
                 const mod = @field(manifest.modules, field.name);
                 const is_private = @hasField(@TypeOf(mod), "private") and mod.private;
+                failed = try self.reserveOwnedImportName(
+                    &reserved_imports,
+                    field.name,
+                    if (is_private) "private named module" else "named module",
+                ) or failed;
                 if (!is_private) {
-                    failed = try self.reservePublicModuleName(&reserved_modules, field.name, "named module") or failed;
+                    failed = try self.ensurePublicModuleNameAvailable(field.name, "named module") or failed;
+                }
+            }
+        }
+
+        if (@hasField(@TypeOf(manifest), "options_modules")) {
+            inline for (@typeInfo(@TypeOf(manifest.options_modules)).@"struct".fields) |field| {
+                failed = try self.reserveOwnedImportName(&reserved_imports, field.name, "options module") or failed;
+            }
+        }
+
+        if (@hasField(@TypeOf(manifest), "dependencies")) {
+            inline for (@typeInfo(@TypeOf(manifest.dependencies)).@"struct".fields) |field| {
+                if (self.result.dependencies.get(field.name)) |dep| {
+                    if (dep.builder.modules.get(field.name) != null) {
+                        failed = try self.reserveOwnedImportName(&reserved_imports, field.name, "dependency default module") or failed;
+                    }
                 }
             }
         }
@@ -1203,7 +1224,7 @@ const BuildRunner = struct {
         return failed;
     }
 
-    fn reservePublicModuleName(
+    fn reserveOwnedImportName(
         self: *BuildRunner,
         reserved: *std.StringHashMap([]const u8),
         name: []const u8,
@@ -1211,7 +1232,7 @@ const BuildRunner = struct {
     ) !bool {
         const gop = try reserved.getOrPut(name);
         if (gop.found_existing) {
-            self.invalidateManifest("{s} '{s}' collides with another zbuild public module reservation ({s})", .{
+            self.invalidateManifest("{s} '{s}' collides with another zbuild-owned import name ({s})", .{
                 origin,
                 name,
                 gop.value_ptr.*,
@@ -1220,6 +1241,10 @@ const BuildRunner = struct {
         }
         gop.value_ptr.* = origin;
 
+        return false;
+    }
+
+    fn ensurePublicModuleNameAvailable(self: *BuildRunner, name: []const u8, origin: []const u8) !bool {
         if (self.b.modules.get(name) != null) {
             self.invalidateManifest("{s} '{s}' collides with an existing module registered before configureBuild", .{
                 origin,

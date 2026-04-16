@@ -109,6 +109,18 @@ pub fn build(b: *std.Build) void {
         .stderr_match = "run command step 'cmd:demo' collides with an existing top-level step registered before configureBuild",
     });
     addFixtureCommand(b, tls_test_fixtures, .{
+        .name = "import-namespace-named-options-collision",
+        .cwd = "test/fixtures/import_namespace_named_options_collision",
+        .expect_exit = 1,
+        .stderr_match = "options module 'config' collides with another zbuild-owned import name (named module)",
+    });
+    addFixtureCommand(b, tls_test_fixtures, .{
+        .name = "import-namespace-dependency-default-collision",
+        .cwd = "test/fixtures/import_namespace_dependency_default_collision",
+        .expect_exit = 1,
+        .stderr_match = "dependency default module 'dep_pkg' collides with another zbuild-owned import name (options module)",
+    });
+    addFixtureCommand(b, tls_test_fixtures, .{
         .name = "inline-name-collision",
         .cwd = "test/fixtures/inline_name_collision",
         .expect_exit = 2,
