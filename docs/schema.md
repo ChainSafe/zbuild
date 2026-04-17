@@ -353,6 +353,54 @@ pub const LogLevel = enum {
 pub const log_level: LogLevel = .info;
 ```
 
+## `presets`
+
+Named bundles of `options_modules` overrides. Presets are opt-in only: nothing changes unless the user passes `-Dpreset=<name>`.
+
+```zig
+.presets = .{
+    .dev = .{
+        .app = .{
+            .log_level = .debug,
+            .enable_tracing = true,
+        },
+    },
+    .prod = .{
+        .app = .{
+            .log_level = .warn,
+            .asset_dir = "dist/prod",
+        },
+    },
+},
+```
+
+Select a preset from the CLI:
+
+```bash
+zig build -Dpreset=prod
+zig build -Dpreset=prod -Dapp.log_level=debug
+```
+
+### Structure
+
+- Each top-level preset name is a CLI-selectable preset.
+- Each preset field must name an existing `options_modules` entry.
+- Each override field inside that module must name an existing option.
+- Override values are raw values only. They do not repeat `type`.
+
+### Resolution rules
+
+Presets only affect `options_modules`. They do not modify modules, artifacts, runs, aliases, or dependencies.
+
+For each option, zbuild resolves values in this order:
+
+1. explicit `-D<module>.<option>=...`
+2. selected preset override
+3. option `default`
+4. `null`
+
+If an option declares a `default`, its generated field type remains `T` even when a preset overrides that default. If an option has no `default`, its generated field type remains `?T` even when a preset supplies a value.
+
 ## `dependencies`
 
 Standard Zig dependencies declared in `build.zig.zon`. zbuild adds support for an `args` field to forward comptime arguments:

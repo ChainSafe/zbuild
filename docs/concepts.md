@@ -39,6 +39,8 @@ Different sections create different kinds of graph nodes:
 
 This is the first important idea: zbuild sections are not random manifest blobs. Each section exists because it corresponds to a specific class of `std.Build` node.
 
+`presets` are the exception on purpose: they do not create graph nodes. They are named bundles of `options_modules` overrides layered on top of the option schema.
+
 ## 3. Ownership lives in syntax
 
 The cleanest part of zbuild's design is that reference syntax encodes ownership.
@@ -192,6 +194,22 @@ const config = @import("config");
 ```
 
 That is why `options_modules` live in the import namespace but are not valid `root_module` targets: they are config surfaces, not compilation roots.
+
+`presets` sit on top of that system, not beside it. A preset:
+
+- is selected explicitly with `-Dpreset=<name>`
+- only overrides `options_modules`
+- does not redefine types
+- does not create another imported module
+
+The precedence is:
+
+1. explicit `-Dmodule.option=...`
+2. selected preset override
+3. declared option default
+4. `null`
+
+That keeps presets as a convenience layer for repeated option bundles, not a second configuration system.
 
 ## 8. Interop is explicit, not magical
 

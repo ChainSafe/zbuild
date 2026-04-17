@@ -67,6 +67,7 @@ Once the first executable works, add modules, tests, runs, fmts, options modules
 - `runs` for arbitrary system commands
 - `aliases` for named aggregate steps such as `check`, `ci`, or `release`
 - `options_modules` that become importable Zig config modules and `-Dmodule.option` CLI flags
+- `presets` for named bundles of `options_modules` defaults, selected with `-Dpreset=<name>`
 - comptime dependency args forwarded to `b.dependency(...)`
 - a built-in help step (`help` by default, configurable via `Options.help_step`)
 - two-phase validation so local graph mistakes fail early
@@ -87,6 +88,47 @@ zbuild becomes easy to use once you keep three rules in your head:
    Manual refs and dependency exports fail during configure, after zbuild can actually inspect them.
 
 If you want the full model, including namespace rules and why those syntax splits exist, read [docs/concepts.md](docs/concepts.md).
+
+## Named Presets
+
+If you have a recurring bundle of option values, keep the types in `options_modules` and add a named preset on top:
+
+```zig
+.options_modules = .{
+    .app = .{
+        .log_level = .{
+            .type = .@"enum",
+            .values = .{ .debug, .info, .warn },
+            .default = .info,
+        },
+        .asset_dir = .{
+            .type = .string,
+        },
+    },
+},
+.presets = .{
+    .dev = .{
+        .app = .{
+            .log_level = .debug,
+        },
+    },
+    .prod = .{
+        .app = .{
+            .log_level = .warn,
+            .asset_dir = "dist/prod",
+        },
+    },
+},
+```
+
+Then select one explicitly:
+
+```bash
+zig build run:myapp -Dpreset=prod
+zig build run:myapp -Dpreset=prod -Dapp.log_level=debug
+```
+
+Presets only override `options_modules`. They do not create a second config API, and per-option `-Dmodule.option=...` flags still win.
 
 ## Working With Manual `build.zig` Code
 

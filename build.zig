@@ -106,6 +106,25 @@ pub fn build(b: *std.Build) void {
         .stderr_match = "alias fixture ok",
     });
     addFixtureCommand(b, tls_test_fixtures, .{
+        .name = "presets-prod",
+        .cwd = "test/fixtures/presets",
+        .build_args = &.{ "run:demo", "-Dpreset=prod" },
+        .stderr_match = "level=warn tracing=false asset=dist/prod",
+    });
+    addFixtureCommand(b, tls_test_fixtures, .{
+        .name = "presets-cli-override",
+        .cwd = "test/fixtures/presets",
+        .build_args = &.{ "run:demo", "-Dpreset=prod", "-Dconfig.log_level=debug" },
+        .stderr_match = "level=debug tracing=false asset=dist/prod",
+    });
+    addFixtureCommand(b, tls_test_fixtures, .{
+        .name = "presets-invalid-name",
+        .cwd = "test/fixtures/presets",
+        .build_args = &.{ "run:demo", "-Dpreset=missing" },
+        .expect_exit = 1,
+        .stderr_match = "invalid value for -Dpreset: 'missing'",
+    });
+    addFixtureCommand(b, tls_test_fixtures, .{
         .name = "manual-module-collision",
         .cwd = "test/fixtures/manual_module_collision",
         .expect_exit = 1,
@@ -164,6 +183,12 @@ pub fn build(b: *std.Build) void {
         .cwd = "test/fixtures/alias_empty_depends_on",
         .expect_exit = 2,
         .stderr_match = "aliases 'check': depends_on must not be empty",
+    });
+    addFixtureCommand(b, tls_test_fixtures, .{
+        .name = "preset-unknown-option",
+        .cwd = "test/fixtures/preset_unknown_option",
+        .expect_exit = 2,
+        .stderr_match = "presets 'dev.config': unknown option 'missing'",
     });
     addFixtureCommand(b, tls_test_fixtures, .{
         .name = "stdlib-passthrough-library",

@@ -38,12 +38,14 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: 
         .inline_modules = std.StringHashMap(*std.Build.Module).init(b.allocator),
         .manual_modules = std.StringHashMap(void).init(b.allocator),
         .manual_steps = std.StringHashMap(void).init(b.allocator),
+        .active_preset = null,
     };
     defer runner.manual_modules.deinit();
     defer runner.manual_steps.deinit();
 
     try runner.snapshotPreexistingNamespaces();
     comptime validateManifest(manifest, opts);
+    runner.active_preset = runner.resolveActivePreset(manifest);
 
     // Phase 1: Resolve dependencies (comptime args forwarding)
     if (@hasField(@TypeOf(manifest), "dependencies")) {
@@ -63,7 +65,7 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: 
     // Phase 2: Create options modules
     if (@hasField(@TypeOf(manifest), "options_modules")) {
         inline for (@typeInfo(@TypeOf(manifest.options_modules)).@"struct".fields) |field| {
-            try runner.createOptionsModule(field.name, @field(manifest.options_modules, field.name));
+            try runner.createOptionsModule(manifest, field.name, @field(manifest.options_modules, field.name));
         }
     }
 
@@ -201,6 +203,7 @@ fn validateManifest(comptime manifest: anytype, comptime opts: Options) void {
     }
 
     validateOptionsModules(manifest);
+    validatePresets(manifest);
 
     // Validate runs: depends_on refs and stdin/stdin_file exclusion
     if (@hasField(@TypeOf(manifest), "runs")) {
@@ -809,6 +812,121 @@ fn validateOptionsModules(comptime manifest: anytype) void {
     }
 }
 
+fn validatePresets(comptime manifest: anytype) void {
+    if (!@hasField(@TypeOf(manifest), "presets")) return;
+
+    if (!@hasField(@TypeOf(manifest), "options_modules")) {
+        @compileError("presets requires options_modules");
+    }
+
+    const preset_fields = @typeInfo(@TypeOf(manifest.presets)).@"struct".fields;
+    if (preset_fields.len == 0) {
+        @compileError("presets must not be empty");
+    }
+
+    inline for (preset_fields) |preset_field| {
+        validatePreset(manifest, preset_field.name, @field(manifest.presets, preset_field.name));
+    }
+}
+
+fn validatePreset(comptime manifest: anytype, comptime preset_name: []const u8, comptime preset: anytype) void {
+    const Preset = @TypeOf(preset);
+    const preset_info = @typeInfo(Preset).@"struct";
+    if (preset_info.is_tuple) {
+        @compileError("presets '" ++ preset_name ++ "': expected a struct of options_modules overrides");
+    }
+
+    if (preset_info.fields.len == 0) {
+        @compileError("presets '" ++ preset_name ++ "': must override at least one options module");
+    }
+
+    inline for (preset_info.fields) |module_field| {
+        if (!hasOptionsModule(manifest, module_field.name)) {
+            @compileError("presets '" ++ preset_name ++ "': unknown options module '" ++ module_field.name ++ "'");
+        }
+        validatePresetModule(
+            manifest,
+            preset_name,
+            module_field.name,
+            @field(preset, module_field.name),
+        );
+    }
+}
+
+fn validatePresetModule(
+    comptime manifest: anytype,
+    comptime preset_name: []const u8,
+    comptime module_name: []const u8,
+    comptime overrides: anytype,
+) void {
+    const Overrides = @TypeOf(overrides);
+    const overrides_info = @typeInfo(Overrides).@"struct";
+    if (overrides_info.is_tuple) {
+        @compileError("presets '" ++ preset_name ++ "." ++ module_name ++ "': expected a struct of option overrides");
+    }
+
+    if (overrides_info.fields.len == 0) {
+        @compileError("presets '" ++ preset_name ++ "." ++ module_name ++ "': must override at least one option");
+    }
+
+    const options_module = @field(manifest.options_modules, module_name);
+    inline for (overrides_info.fields) |field| {
+        if (!@hasField(@TypeOf(options_module), field.name)) {
+            @compileError("presets '" ++ preset_name ++ "." ++ module_name ++ "': unknown option '" ++ field.name ++ "'");
+        }
+        validatePresetOptionOverride(
+            preset_name,
+            module_name,
+            field.name,
+            @field(options_module, field.name),
+            @field(overrides, field.name),
+        );
+    }
+}
+
+fn validatePresetOptionOverride(
+    comptime preset_name: []const u8,
+    comptime module_name: []const u8,
+    comptime option_name: []const u8,
+    comptime opt: anytype,
+    comptime value: anytype,
+) void {
+    const type_str = comptime optionTypeString(opt);
+    if (comptime std.mem.eql(u8, type_str, "bool")) {
+        const value_check: bool = value;
+        _ = value_check;
+    } else if (comptime std.mem.eql(u8, type_str, "string")) {
+        const value_check: []const u8 = value;
+        _ = value_check;
+    } else if (comptime std.mem.eql(u8, type_str, "list")) {
+        _ = comptime toStringSlice(value);
+    } else if (comptime std.mem.eql(u8, type_str, "enum")) {
+        validatePresetEnumChoice(preset_name, module_name, option_name, toComptimeString(value), enumOptionValues(opt));
+    } else if (comptime std.mem.eql(u8, type_str, "enum_list")) {
+        inline for (comptime toComptimeStringSlice(value)) |entry| {
+            validatePresetEnumChoice(preset_name, module_name, option_name, entry, enumOptionValues(opt));
+        }
+    } else if (comptime isIntType(type_str)) {
+        validateNumericValue(optionValueType(type_str), value, "preset override");
+    } else if (comptime isFloatType(type_str)) {
+        validateNumericValue(optionValueType(type_str), value, "preset override");
+    } else {
+        @compileError("presets '" ++ preset_name ++ "." ++ module_name ++ "." ++ option_name ++ "': unsupported option type '" ++ type_str ++ "'");
+    }
+}
+
+fn validatePresetEnumChoice(
+    comptime preset_name: []const u8,
+    comptime module_name: []const u8,
+    comptime option_name: []const u8,
+    comptime value: []const u8,
+    comptime allowed: []const []const u8,
+) void {
+    if (!comptime stringSliceContains(allowed, value)) {
+        @compileError("presets '" ++ preset_name ++ "." ++ module_name ++ "." ++ option_name ++ "': override value '" ++ value ++ "' is not present in the option's 'values'");
+    }
+}
+
 fn validateOptionsModule(comptime module_name: []const u8, comptime options: anytype) void {
     const fields = @typeInfo(@TypeOf(options)).@"struct".fields;
 
@@ -915,21 +1033,21 @@ fn validateOptionDefault(comptime module_name: []const u8, comptime option_name:
             validateEnumChoice(module_name, option_name, value, enumOptionValues(opt));
         }
     } else if (comptime isIntType(type_str)) {
-        validateNumericDefault(optionValueType(type_str), opt.default);
+        validateNumericValue(optionValueType(type_str), opt.default, "default");
     } else if (comptime isFloatType(type_str)) {
-        validateNumericDefault(optionValueType(type_str), opt.default);
+        validateNumericValue(optionValueType(type_str), opt.default, "default");
     } else {
         @compileError("options_modules '" ++ module_name ++ "." ++ option_name ++ "': unsupported option type '" ++ type_str ++ "'");
     }
 }
 
-fn validateNumericDefault(comptime T: type, comptime value: anytype) void {
+fn validateNumericValue(comptime T: type, comptime value: anytype, comptime source: []const u8) void {
     switch (@typeInfo(@TypeOf(value))) {
         .int, .comptime_int, .float, .comptime_float => {
             const default_check: T = value;
             _ = default_check;
         },
-        else => @compileError("expected a numeric default value"),
+        else => @compileError("expected a numeric " ++ source ++ " value"),
     }
 }
 
@@ -1175,6 +1293,7 @@ const BuildRunner = struct {
     inline_modules: std.StringHashMap(*std.Build.Module), // internal: inline root modules only
     manual_modules: std.StringHashMap(void),
     manual_steps: std.StringHashMap(void),
+    active_preset: ?[]const u8,
 
     const Error = error{ OutOfMemory, ModuleNotFound, NameCollision };
     const DependencyArtifactLookup = union(enum) {
@@ -1193,6 +1312,36 @@ const BuildRunner = struct {
         while (step_it.next()) |entry| {
             try self.manual_steps.put(entry.key_ptr.*, {});
         }
+    }
+
+    fn resolveActivePreset(self: *BuildRunner, comptime manifest: anytype) ?[]const u8 {
+        if (!@hasField(@TypeOf(manifest), "presets")) return null;
+
+        const selected = self.b.option([]const u8, "preset", "Named preset used to override options_modules defaults") orelse
+            return null;
+
+        inline for (@typeInfo(@TypeOf(manifest.presets)).@"struct".fields) |field| {
+            if (std.mem.eql(u8, selected, field.name)) return selected;
+        }
+
+        self.logInvalidPresetName(selected, manifest);
+        return null;
+    }
+
+    fn logInvalidPresetName(self: *BuildRunner, actual: []const u8, comptime manifest: anytype) void {
+        var expected: std.ArrayList(u8) = .empty;
+        defer expected.deinit(self.b.allocator);
+
+        inline for (@typeInfo(@TypeOf(manifest.presets)).@"struct".fields, 0..) |field, i| {
+            if (i > 0) expected.appendSlice(self.b.allocator, ", ") catch @panic("OOM");
+            expected.appendSlice(self.b.allocator, field.name) catch @panic("OOM");
+        }
+
+        std.log.err("invalid value for -Dpreset: '{s}' (expected one of: {s})", .{
+            actual,
+            expected.items,
+        });
+        self.b.invalid_user_input = true;
     }
 
     fn validateResolvedManifest(self: *BuildRunner, comptime manifest: anytype) bool {
@@ -1901,7 +2050,7 @@ const BuildRunner = struct {
 
     // --- Options modules ---
 
-    fn createOptionsModule(self: *BuildRunner, comptime name: []const u8, comptime options: anytype) !void {
+    fn createOptionsModule(self: *BuildRunner, comptime manifest: anytype, comptime name: []const u8, comptime options: anytype) !void {
         var source: std.ArrayList(u8) = .empty;
         defer source.deinit(self.b.allocator);
 
@@ -1929,7 +2078,7 @@ const BuildRunner = struct {
         }
 
         inline for (fields) |field| {
-            try self.emitOptionField(&source, name, field.name, @field(options, field.name));
+            try self.emitOptionField(&source, manifest, name, field.name, @field(options, field.name));
         }
 
         const write_file = self.b.addWriteFiles();
@@ -1947,7 +2096,14 @@ const BuildRunner = struct {
         return pascalCaseAlloc(self.b.allocator, option_name);
     }
 
-    fn emitOptionField(self: *BuildRunner, out: *std.ArrayList(u8), comptime module_name: []const u8, comptime option_name: []const u8, comptime opt: anytype) !void {
+    fn emitOptionField(
+        self: *BuildRunner,
+        out: *std.ArrayList(u8),
+        comptime manifest: anytype,
+        comptime module_name: []const u8,
+        comptime option_name: []const u8,
+        comptime opt: anytype,
+    ) !void {
         const gpa = self.b.allocator;
         const Opt = @TypeOf(opt);
         const type_str = comptime optionTypeString(opt);
@@ -1956,12 +2112,13 @@ const BuildRunner = struct {
 
         if (comptime std.mem.eql(u8, type_str, "bool")) {
             const value = self.b.option(bool, cli_name, desc);
+            const preset_value = self.resolvePresetOptionOverride(manifest, module_name, option_name, opt);
             if (@hasField(Opt, "default")) {
                 try out.print(gpa, "pub const {f}: bool = {any};\n", .{
                     std.zig.fmtId(option_name),
-                    value orelse opt.default,
+                    value orelse preset_value orelse opt.default,
                 });
-            } else if (value) |resolved| {
+            } else if (value orelse preset_value) |resolved| {
                 try out.print(gpa, "pub const {f}: ?bool = {any};\n", .{
                     std.zig.fmtId(option_name),
                     resolved,
@@ -1974,7 +2131,8 @@ const BuildRunner = struct {
 
         if (comptime std.mem.eql(u8, type_str, "string")) {
             const value = self.b.option([]const u8, cli_name, desc);
-            if (value) |resolved| {
+            const preset_value = self.resolvePresetOptionOverride(manifest, module_name, option_name, opt);
+            if (value orelse preset_value) |resolved| {
                 if (@hasField(Opt, "default")) {
                     try out.print(gpa, "pub const {f}: []const u8 = \"{f}\";\n", .{
                         std.zig.fmtId(option_name),
@@ -1999,7 +2157,8 @@ const BuildRunner = struct {
 
         if (comptime std.mem.eql(u8, type_str, "list")) {
             const value = self.b.option([]const []const u8, cli_name, desc);
-            if (value) |resolved| {
+            const preset_value = self.resolvePresetOptionOverride(manifest, module_name, option_name, opt);
+            if (value orelse preset_value) |resolved| {
                 if (@hasField(Opt, "default")) {
                     try out.print(gpa, "pub const {f}: []const []const u8 = ", .{std.zig.fmtId(option_name)});
                 } else {
@@ -2022,13 +2181,18 @@ const BuildRunner = struct {
             const type_name = try self.optionTypeNameAlloc(option_name, opt);
             defer gpa.free(type_name);
             const value = self.b.option([]const u8, cli_name, desc);
+            const preset_value = self.resolvePresetOptionOverride(manifest, module_name, option_name, opt);
             const resolved = if (value) |candidate|
                 if (self.validateEnumOptionValue(cli_name, candidate, allowed))
                     @as(?[]const u8, candidate)
+                else if (preset_value) |preset|
+                    @as(?[]const u8, preset)
                 else if (@hasField(Opt, "default"))
                     @as(?[]const u8, toComptimeString(opt.default))
                 else
                     null
+            else if (preset_value) |preset|
+                @as(?[]const u8, preset)
             else if (@hasField(Opt, "default"))
                 @as(?[]const u8, toComptimeString(opt.default))
             else
@@ -2060,13 +2224,18 @@ const BuildRunner = struct {
             const type_name = try self.optionTypeNameAlloc(option_name, opt);
             defer gpa.free(type_name);
             const value = self.b.option([]const []const u8, cli_name, desc);
+            const preset_value = self.resolvePresetOptionOverride(manifest, module_name, option_name, opt);
             const resolved = if (value) |candidates|
                 if (self.validateEnumOptionValues(cli_name, candidates, allowed))
                     @as(?[]const []const u8, candidates)
+                else if (preset_value) |preset|
+                    @as(?[]const []const u8, preset)
                 else if (@hasField(Opt, "default"))
                     @as(?[]const []const u8, comptime toComptimeStringSlice(opt.default))
                 else
                     null
+            else if (preset_value) |preset|
+                @as(?[]const []const u8, preset)
             else if (@hasField(Opt, "default"))
                 @as(?[]const []const u8, comptime toComptimeStringSlice(opt.default))
             else
@@ -2098,13 +2267,14 @@ const BuildRunner = struct {
         if (comptime isIntType(type_str) or isFloatType(type_str)) {
             const T = comptime optionValueType(type_str);
             const value = self.b.option(T, cli_name, desc);
+            const preset_value = self.resolvePresetOptionOverride(manifest, module_name, option_name, opt);
             if (@hasField(Opt, "default")) {
                 try out.print(gpa, "pub const {f}: {s} = {any};\n", .{
                     std.zig.fmtId(option_name),
                     type_str,
-                    value orelse opt.default,
+                    value orelse preset_value orelse opt.default,
                 });
-            } else if (value) |resolved| {
+            } else if (value orelse preset_value) |resolved| {
                 try out.print(gpa, "pub const {f}: ?{s} = {any};\n", .{
                     std.zig.fmtId(option_name),
                     type_str,
@@ -2120,6 +2290,31 @@ const BuildRunner = struct {
         }
 
         @compileError("unknown option type '" ++ type_str ++ "'");
+    }
+
+    fn resolvePresetOptionOverride(
+        self: *BuildRunner,
+        comptime manifest: anytype,
+        comptime module_name: []const u8,
+        comptime option_name: []const u8,
+        comptime opt: anytype,
+    ) ?optionOverrideValueType(opt) {
+        const preset_name = self.active_preset orelse return null;
+        if (!@hasField(@TypeOf(manifest), "presets")) return null;
+
+        inline for (@typeInfo(@TypeOf(manifest.presets)).@"struct".fields) |preset_field| {
+            if (std.mem.eql(u8, preset_name, preset_field.name)) {
+                const preset = @field(manifest.presets, preset_field.name);
+                if (!@hasField(@TypeOf(preset), module_name)) return null;
+
+                const module_overrides = @field(preset, module_name);
+                if (!@hasField(@TypeOf(module_overrides), option_name)) return null;
+
+                return coercePresetOptionOverride(opt, @field(module_overrides, option_name));
+            }
+        }
+
+        return null;
     }
 
     fn validateEnumOptionValue(self: *BuildRunner, name: []const u8, actual: []const u8, allowed: []const []const u8) bool {
@@ -2416,6 +2611,38 @@ fn optionValueType(comptime t: []const u8) type {
     }
 
     @compileError("unsupported option type '" ++ t ++ "'");
+}
+
+fn optionOverrideValueType(comptime opt: anytype) type {
+    const type_str = comptime optionTypeString(opt);
+    if (comptime std.mem.eql(u8, type_str, "enum")) return []const u8;
+    if (comptime std.mem.eql(u8, type_str, "enum_list")) return []const []const u8;
+    return optionValueType(type_str);
+}
+
+fn coercePresetOptionOverride(comptime opt: anytype, comptime value: anytype) optionOverrideValueType(opt) {
+    const type_str = comptime optionTypeString(opt);
+    if (comptime std.mem.eql(u8, type_str, "bool")) {
+        const value_check: bool = value;
+        return value_check;
+    }
+    if (comptime std.mem.eql(u8, type_str, "string")) {
+        const value_check: []const u8 = value;
+        return value_check;
+    }
+    if (comptime std.mem.eql(u8, type_str, "list")) {
+        return comptime toStringSlice(value);
+    }
+    if (comptime std.mem.eql(u8, type_str, "enum")) {
+        return toComptimeString(value);
+    }
+    if (comptime std.mem.eql(u8, type_str, "enum_list")) {
+        return comptime toComptimeStringSlice(value);
+    }
+
+    const T = comptime optionValueType(type_str);
+    const value_check: T = value;
+    return value_check;
 }
 
 fn enumOptionValues(comptime opt: anytype) []const []const u8 {
@@ -2804,6 +3031,46 @@ test "validateManifest accepts typed options modules" {
                 },
                 .output_dir = .{
                     .type = .string,
+                },
+            },
+        },
+    }, .{});
+}
+
+test "validateManifest accepts presets for options modules" {
+    comptime validateManifest(.{
+        .name = .myproject,
+        .version = "0.1.0",
+        .fingerprint = 0x1234,
+        .minimum_zig_version = "0.16.0",
+        .paths = .{"."},
+        .options_modules = .{
+            .config = .{
+                .verbose = .{
+                    .type = .bool,
+                    .default = false,
+                },
+                .log_level = .{
+                    .type = .@"enum",
+                    .values = .{ .debug, .info, .warn },
+                    .default = .info,
+                },
+                .output_dir = .{
+                    .type = .string,
+                },
+            },
+        },
+        .presets = .{
+            .dev = .{
+                .config = .{
+                    .verbose = true,
+                    .log_level = .debug,
+                },
+            },
+            .release = .{
+                .config = .{
+                    .log_level = .warn,
+                    .output_dir = "dist",
                 },
             },
         },

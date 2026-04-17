@@ -1,0 +1,25 @@
+.{
+    .name = .preset_unknown_option,
+    .version = "0.1.0",
+    .fingerprint = 0xc20daa3edff0612c,
+    .minimum_zig_version = "0.16.0",
+    .paths = .{ "build.zig", "build.zig.zon" },
+    .dependencies = .{
+        .zbuild = .{ .path = "../../.." },
+    },
+    .options_modules = .{
+        .config = .{
+            .verbose = .{
+                .type = .bool,
+                .default = false,
+            },
+        },
+    },
+    .presets = .{
+        .dev = .{
+            .config = .{
+                .missing = true,
+            },
+        },
+    },
+}
