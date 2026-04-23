@@ -48,13 +48,29 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: 
     runner.active_preset = runner.resolveActivePreset(manifest);
 
     // Phase 1: Resolve dependencies (comptime args forwarding)
+    //
+    // When a dependency declaration has no explicit `.args`, forward the
+    // parent's resolved `target` and `optimize` to the child build. Without
+    // this, `b.dependency(name, .{})` spawns child builds that fall back to
+    // host target + Debug optimize regardless of the parent's CLI flags,
+    // which breaks C-heavy deps: Debug's default `sanitize_c=.full` emits
+    // `__ubsan_handle_*` calls into the dep's object files, leaving
+    // unresolved symbols in the final link (and crashing at dlopen time
+    // for shared libraries like Node NAPI `.node` files).
+    //
+    // If the user supplies `.args`, they are passed through unchanged so
+    // the user can fully control dep build options (target, optimize, or
+    // dep-specific switches).
     if (@hasField(@TypeOf(manifest), "dependencies")) {
         inline for (@typeInfo(@TypeOf(manifest.dependencies)).@"struct".fields) |field| {
             const decl = @field(manifest.dependencies, field.name);
             const dep = if (@hasField(@TypeOf(decl), "args"))
                 b.dependency(field.name, decl.args)
             else
-                b.dependency(field.name, .{});
+                b.dependency(field.name, .{
+                    .target = runner.target,
+                    .optimize = runner.optimize,
+                });
             try runner.result.dependencies.put(field.name, dep);
         }
     }
