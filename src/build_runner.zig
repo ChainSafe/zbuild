@@ -274,8 +274,8 @@ fn isKnownArtifactField(comptime section: []const u8, comptime field_name: []con
         return true;
     }
 
-    if (comptime std.mem.eql(u8, section, "libraries") and
-        std.mem.eql(u8, field_name, "linker_allow_shlib_undefined"))
+    if ((comptime std.mem.eql(u8, section, "libraries") or std.mem.eql(u8, section, "tests")) and
+        comptime std.mem.eql(u8, field_name, "linker_allow_shlib_undefined"))
     {
         return true;
     }
@@ -1968,6 +1968,10 @@ const BuildRunner = struct {
 
         const artifact = self.b.addTest(add_opts);
         try self.result.tests.put(name, artifact);
+
+        if (@hasField(T, "linker_allow_shlib_undefined")) {
+            artifact.linker_allow_shlib_undefined = t.linker_allow_shlib_undefined;
+        }
 
         const install = self.b.addInstallArtifact(artifact, .{});
         const tls_install = try self.createTopLevelStep(

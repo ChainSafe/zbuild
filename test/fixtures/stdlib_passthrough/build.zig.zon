@@ -17,6 +17,7 @@
         .mylib = .{
             .root_module = .core,
             .win32_module_definition = "src/mylib.def",
+            .linker_allow_shlib_undefined = true,
         },
     },
     .tests = .{
@@ -30,6 +31,7 @@
                 .mode = .simple,
             },
             .emit_object = false,
+            .linker_allow_shlib_undefined = true,
         },
     },
 }

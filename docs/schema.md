@@ -166,6 +166,7 @@ Test targets. Each entry creates `test:<name>` (run) and `build-test:<name>` (in
 | `zig_lib_dir` | string | — | Custom Zig lib directory |
 | `test_runner` | struct | — | Custom test runner struct with `path` and `mode` (`.simple` or `.server`) |
 | `emit_object` | bool | `false` | Emit a test object file instead of a runnable test binary |
+| `linker_allow_shlib_undefined` | bool | — | Allow undefined symbols in shared libs the test links against (e.g. napi C symbols Node provides at dlopen time) |
 
 Filters can be overridden from the CLI: `-D<test_name>.filters=specific_test`.
 
