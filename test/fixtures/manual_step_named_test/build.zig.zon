@@ -1,0 +1,23 @@
+.{
+    .name = .manual_step_named_test,
+    .version = "0.1.0",
+    .fingerprint = 0xc2d7cd4f593eb900,
+    .minimum_zig_version = "0.16.0",
+    .paths = .{ "build.zig", "build.zig.zon", "src" },
+    .dependencies = .{
+        .zbuild = .{ .path = "../../.." },
+    },
+    .executables = .{
+        .app = .{
+            .root_module = .{
+                .root_source_file = "src/main.zig",
+            },
+        },
+    },
+    .runs = .{
+        .demo = .{
+            .cmd = .{ "echo", "manual test step ok" },
+            .depends_on = .{"test"},
+        },
+    },
+}

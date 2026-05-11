@@ -1,0 +1,22 @@
+.{
+    .name = .import_ns_named_opts,
+    .version = "0.1.0",
+    .fingerprint = 0x9ba0f709896de986,
+    .minimum_zig_version = "0.16.0",
+    .paths = .{ "build.zig", "build.zig.zon", "src" },
+    .dependencies = .{
+        .zbuild = .{ .path = "../../.." },
+    },
+    .modules = .{
+        .config = .{
+            .root_source_file = "src/config.zig",
+        },
+    },
+    .options_modules = .{
+        .config = .{
+            .verbose = .{
+                .type = .bool,
+            },
+        },
+    },
+}

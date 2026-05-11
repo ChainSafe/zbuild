@@ -1,0 +1,31 @@
+.{
+    .name = .aliases_nested,
+    .version = "0.1.0",
+    .fingerprint = 0x9742fd4b3beb0b7f,
+    .minimum_zig_version = "0.16.0",
+    .paths = .{ "build.zig", "build.zig.zon", "src" },
+    .description = "Nested alias fixture",
+    .dependencies = .{
+        .zbuild = .{ .path = "../../.." },
+    },
+    .executables = .{
+        .hello = .{
+            .root_module = .{
+                .root_source_file = "src/main.zig",
+            },
+        },
+    },
+    .aliases = .{
+        .smoke = .{
+            .depends_on = .{
+                "run:hello",
+            },
+        },
+        .check = .{
+            .description = "Run nested alias checks",
+            .depends_on = .{
+                "smoke",
+            },
+        },
+    },
+}

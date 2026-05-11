@@ -1,0 +1,16 @@
+.{
+    .name = .alias_empty_depends_on,
+    .version = "0.1.0",
+    .fingerprint = 0xe19fa0c952d85520,
+    .minimum_zig_version = "0.16.0",
+    .paths = .{ "build.zig", "build.zig.zon" },
+    .description = "Alias empty depends_on fixture",
+    .dependencies = .{
+        .zbuild = .{ .path = "../../.." },
+    },
+    .aliases = .{
+        .check = .{
+            .depends_on = .{},
+        },
+    },
+}
