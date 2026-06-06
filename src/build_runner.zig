@@ -58,14 +58,21 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: 
     // unresolved symbols in the final link (and crashing at dlopen time
     // for shared libraries like Node NAPI `.node` files).
     //
-    // If the user supplies `.args`, they are passed through unchanged so
-    // the user can fully control dep build options (target, optimize, or
-    // dep-specific switches).
+    // If the user supplies `.args`, preserve them and only fill in missing
+    // target/optimize defaults. This keeps dep-specific switches intact while
+    // avoiding accidental host-target builds for cross-compiled dependencies.
     if (@hasField(@TypeOf(manifest), "dependencies")) {
         inline for (@typeInfo(@TypeOf(manifest.dependencies)).@"struct".fields) |field| {
             const decl = @field(manifest.dependencies, field.name);
             const dep = if (@hasField(@TypeOf(decl), "args"))
-                b.dependency(field.name, decl.args)
+                b.dependency(
+                    field.name,
+                    dependencyArgsWithDefaults(
+                        decl.args,
+                        runner.target,
+                        runner.optimize,
+                    ),
+                )
             else
                 b.dependency(field.name, .{
                     .target = runner.target,
@@ -545,6 +552,8 @@ fn validateModuleDefinition(
         validateLazyPathSyntax(manifest, mod.root_source_file, section, name, "root_source_file");
     if (@hasField(Mod, "target"))
         validateTargetString(section, name, mod.target);
+    if (@hasField(Mod, "optimize"))
+        validateOptimize(section, name, mod.optimize);
     if (@hasField(Mod, "include_paths")) {
         inline for (@typeInfo(@TypeOf(mod.include_paths)).@"struct".fields) |field| {
             validateLazyPathSyntax(manifest, @field(mod.include_paths, field.name), section, name, "include_paths");
@@ -818,6 +827,19 @@ fn validateTargetString(comptime section: []const u8, comptime name: []const u8,
     _ = std.Target.Query.parse(.{ .arch_os_abi = target_str }) catch |err| {
         @compileError(section ++ " '" ++ name ++ "': invalid target '" ++ target_str ++ "' (" ++ @errorName(err) ++ ")");
     };
+}
+
+fn validateOptimize(comptime section: []const u8, comptime name: []const u8, comptime optimize: anytype) void {
+    const tag = @tagName(optimize);
+    const modes = std.meta.tags(std.builtin.OptimizeMode);
+    inline for (modes) |mode| {
+        if (comptime std.mem.eql(u8, @tagName(mode), tag)) return;
+    }
+    comptime var expected: []const u8 = "";
+    inline for (modes, 0..) |mode, i| {
+        expected = expected ++ (if (i == 0) "." else ", .") ++ @tagName(mode);
+    }
+    @compileError(section ++ " '" ++ name ++ "': invalid optimize '." ++ tag ++ "'; expected one of " ++ expected);
 }
 
 fn validateOptionsModules(comptime manifest: anytype) void {
@@ -2573,7 +2595,78 @@ const BuildRunner = struct {
     }
 };
 
-// --- Comptime helpers ---
+/// Create a new anonymous struct type for arguments we pass
+/// to the child dependency.
+///
+/// Prepares the 'target' and 'optimize' fields for forwarding
+/// from the parent's options if left empty.
+fn DependencyArgs(comptime Args: type) type {
+    const arg_fields = @typeInfo(Args).@"struct".fields;
+    const has_target = @hasField(Args, "target");
+    const has_optimize = @hasField(Args, "optimize");
+
+    const field_count =
+        arg_fields.len +
+        @intFromBool(!has_target) +
+        @intFromBool(!has_optimize);
+
+    var names: [field_count][]const u8 = undefined;
+    var types: [field_count]type = undefined;
+    var attrs: [field_count]std.builtin.Type.StructField.Attributes = undefined;
+
+    var i: usize = 0;
+    inline for (arg_fields) |f| {
+        names[i] = f.name;
+        types[i] = f.type;
+        attrs[i] = .{
+            .@"comptime" = f.is_comptime,
+            .@"align" = f.alignment,
+            .default_value_ptr = f.default_value_ptr,
+        };
+        i += 1;
+    }
+
+    // If the given args do not have 'target' and 'optimize' set,
+    // we need to forward the parent's, so we create empty fields
+    // for them.
+    if (!has_target) {
+        names[i] = "target";
+        types[i] = std.Target.Query;
+        attrs[i] = .{};
+        i += 1;
+    }
+    if (!has_optimize) {
+        names[i] = "optimize";
+        types[i] = std.builtin.OptimizeMode;
+        attrs[i] = .{};
+    }
+
+    return @Struct(.auto, null, &names, &types, &attrs);
+}
+
+fn dependencyArgsWithDefaults(
+    args: anytype,
+    target_parent: std.Build.ResolvedTarget,
+    optimize_parent: std.builtin.OptimizeMode,
+) DependencyArgs(@TypeOf(args)) {
+    const Args = @TypeOf(args);
+    const ForwardedArgs = DependencyArgs(Args);
+    var result: ForwardedArgs = undefined;
+
+    inline for (@typeInfo(Args).@"struct".fields) |field| {
+        @field(result, field.name) = @field(args, field.name);
+    }
+
+    if (@hasField(Args, "optimize")) {
+        _ = @as(std.builtin.OptimizeMode, @field(args, "optimize"));
+    } else {
+        result.optimize = optimize_parent;
+    }
+
+    if (!@hasField(Args, "target")) result.target = target_parent.query;
+
+    return result;
+}
 
 fn toStringSlice(comptime tuple: anytype) []const []const u8 {
     const fields = @typeInfo(@TypeOf(tuple)).@"struct".fields;
