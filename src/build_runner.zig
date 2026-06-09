@@ -830,15 +830,21 @@ fn validateTargetString(comptime section: []const u8, comptime name: []const u8,
 }
 
 fn validateOptimize(comptime section: []const u8, comptime name: []const u8, comptime optimize: anytype) void {
-    const tag = @tagName(optimize);
+    const T = @TypeOf(optimize);
     const modes = std.meta.tags(std.builtin.OptimizeMode);
-    inline for (modes) |mode| {
-        if (comptime std.mem.eql(u8, @tagName(mode), tag)) return;
-    }
+
     comptime var expected: []const u8 = "";
     inline for (modes, 0..) |mode, i| {
         expected = expected ++ (if (i == 0) "." else ", .") ++ @tagName(mode);
     }
+
+    if (@typeInfo(T) != .enum_literal and T != std.builtin.OptimizeMode) {
+        @compileError(section ++ " '" ++ name ++ "': invalid optimize type; expected one of std.builtin.OptimizeMode");
+    }
+
+    const tag = @tagName(optimize);
+    inline for (modes) |mode| if (comptime std.mem.eql(u8, @tagName(mode), tag)) return;
+
     @compileError(section ++ " '" ++ name ++ "': invalid optimize '." ++ tag ++ "'; expected one of " ++ expected);
 }
 
@@ -2631,7 +2637,7 @@ fn DependencyArgs(comptime Args: type) type {
     // for them.
     if (!has_target) {
         names[i] = "target";
-        types[i] = std.Target.Query;
+        types[i] = std.Build.ResolvedTarget;
         attrs[i] = .{};
         i += 1;
     }
@@ -2663,7 +2669,7 @@ fn dependencyArgsWithDefaults(
         result.optimize = optimize_parent;
     }
 
-    if (!@hasField(Args, "target")) result.target = target_parent.query;
+    if (!@hasField(Args, "target")) result.target = target_parent;
 
     return result;
 }
