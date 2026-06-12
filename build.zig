@@ -167,6 +167,17 @@ pub fn build(b: *std.Build) void {
         .stderr_match = "could not resolve named lazy path 'missing' from dependency 'dep_pkg'",
     });
     addFixtureCommand(b, tls_test_fixtures, .{
+        .name = "dependency-explicit-args",
+        .cwd = "test/fixtures/dependency_explicit_args",
+        // Use uncommon target queries for distinguishability on
+        // common host machines
+        .build_args = &.{ "-Dtarget=powerpc64-linux-none", "-Doptimize=ReleaseSafe" },
+        .stderr_match =
+        \\dep arch=powerpc64 os=linux abi=none optimize=ReleaseFast portable=true
+        \\dep arch=mips64 os=linux abi=none optimize=ReleaseFast portable=true
+        ,
+    });
+    addFixtureCommand(b, tls_test_fixtures, .{
         .name = "root-module-string-options-module",
         .cwd = "test/fixtures/root_module_string_options_module",
         .expect_exit = 2,
@@ -189,6 +200,12 @@ pub fn build(b: *std.Build) void {
         .cwd = "test/fixtures/preset_unknown_option",
         .expect_exit = 2,
         .stderr_match = "presets 'dev.config': unknown option 'missing'",
+    });
+    addFixtureCommand(b, tls_test_fixtures, .{
+        .name = "invalid-optimize",
+        .cwd = "test/fixtures/invalid_optimize",
+        .expect_exit = 2,
+        .stderr_match = "executables 'demo': invalid optimize '.Release'",
     });
     addFixtureCommand(b, tls_test_fixtures, .{
         .name = "stdlib-passthrough-library",

@@ -1,0 +1,20 @@
+.{
+    .name = .invalid_optimize,
+    .version = "0.1.0",
+    .fingerprint = 0x92522e2699681d7c,
+    .minimum_zig_version = "0.16.0",
+    .paths = .{ "build.zig", "build.zig.zon", "src" },
+    .dependencies = .{
+        .zbuild = .{ .path = "../../.." },
+    },
+    .executables = .{
+        .demo = .{
+            .root_module = .{
+                .root_source_file = "src/main.zig",
+                // '.Release' is not a valid std.builtin.OptimizeMode;
+                // zbuild rejects this at configuration time.
+                .optimize = .Release,
+            },
+        },
+    },
+}

@@ -1,0 +1,30 @@
+.{
+    .name = .dep_args,
+    .version = "0.1.0",
+    .fingerprint = 0x6e33b60f1f722c30,
+    .minimum_zig_version = "0.16.0",
+    .paths = .{ "build.zig", "build.zig.zon", "dep" },
+    .dependencies = .{
+        .zbuild = .{ .path = "../../.." },
+        // No 'target' in args: the dependency inherits the parent's
+        // resolved target. The parent is pinned to powerpc64 for distinguishability.
+        .dep_inherit = .{
+            .path = "dep",
+            .args = .{
+                .optimize = .ReleaseFast,
+                .portable = true,
+            },
+        },
+        // Explicit string 'target' in args: the dependency preserves it,
+        // ignoring the parent's target. Pinned to a mips64
+        // so it is distinguishable on standard hosts.
+        .dep_explicit = .{
+            .path = "dep",
+            .args = .{
+                .target = "mips64-linux-none",
+                .optimize = .ReleaseFast,
+                .portable = true,
+            },
+        },
+    },
+}
