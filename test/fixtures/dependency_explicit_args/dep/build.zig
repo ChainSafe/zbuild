@@ -5,7 +5,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const portable = b.option(bool, "portable", "portable mode") orelse false;
 
-    std.debug.print(
+    const contents = b.fmt(
         "dep arch={s} os={s} abi={s} optimize={s} portable={}\n",
         .{
             @tagName(target.result.cpu.arch),
@@ -15,4 +15,5 @@ pub fn build(b: *std.Build) void {
             portable,
         },
     );
+    b.addNamedLazyPath("args", b.addWriteFiles().add("args.txt", contents));
 }

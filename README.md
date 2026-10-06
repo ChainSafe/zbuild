@@ -144,7 +144,7 @@ pub fn build(b: *std.Build) !void {
     _ = b.addModule("shared", .{
         .root_source_file = b.path("src/shared.zig"),
         .target = b.resolveTargetQuery(.{}),
-        .optimize = .Debug,
+        .optimize = .debug,
     });
     _ = b.step("gen:prep", "manual prep step");
 
@@ -178,7 +178,10 @@ Then reference those manual nodes from the manifest with bare strings:
 
 ## Requirements
 
-Zig `0.16.0+`
+Zig `0.17.x` only. Zig `0.16` is no longer supported.
+
+When upgrading an existing manifest, rename optimization modes to `.debug`,
+`.safe`, `.fast`, and `.small`. The rest of the manifest syntax is unchanged.
 
 ## License
 

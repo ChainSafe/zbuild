@@ -2,7 +2,7 @@
     .name = .stdlib_passthrough,
     .version = "0.1.0",
     .fingerprint = 0xb7f75f47342d3f61,
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .paths = .{ "build.zig", "build.zig.zon", "src", "bin" },
     .dependencies = .{
         .zbuild = .{ .path = "../../.." },
@@ -32,6 +32,21 @@
             },
             .emit_object = false,
             .linker_allow_shlib_undefined = true,
+        },
+    },
+    .objects = .{
+        .without_builtins = .{
+            .root_module = .{
+                .root_source_file = "src/core.zig",
+                .no_builtin = true,
+            },
+        },
+    },
+    .fmts = .{
+        .source = .{
+            .paths = .{ "src", "bin" },
+            .exclude_paths = .{"bin"},
+            .check = true,
         },
     },
 }

@@ -25,7 +25,10 @@ jobs:
       - name: Setup Zig
         uses: mlugg/setup-zig@v2.2.1
         with:
-          version: 0.16.0
+          version: 0.17.0
 
       - name: Run test suite
+        run: zig build test --summary all
+
+      - name: Run test suite with cached configuration
         run: zig build test --summary all

@@ -2,6 +2,28 @@ const std = @import("std");
 const build_runner = @import("build_runner.zig");
 const toComptimeString = build_runner.toComptimeString;
 
+pub fn createStep(b: *std.Build, comptime manifest: anytype) *std.Build.Step.Run {
+    const files = b.addWriteFiles();
+    _ = files.add("help.txt", comptime buildHelpText(manifest));
+    const main = files.add("help.zig",
+        \\const std = @import("std");
+        \\pub fn main(init: std.process.Init) !void {
+        \\    try std.Io.File.stdout().writeStreamingAll(init.io, @embedFile("help.txt"));
+        \\}
+        \\
+    );
+    const exe = b.addExecutable(.{
+        .name = "zbuild-help",
+        .root_module = b.createModule(.{
+            .root_source_file = main,
+            // Help must run on the build host even when the project cross-compiles.
+            .target = b.graph.host,
+            .optimize = .debug,
+        }),
+    });
+    return b.addRunArtifact(exe);
+}
+
 pub fn buildHelpText(comptime manifest: anytype) []const u8 {
     var text: []const u8 = "";
 
@@ -16,12 +38,12 @@ pub fn buildHelpText(comptime manifest: anytype) []const u8 {
 
     // Modules
     if (@hasField(@TypeOf(manifest), "modules")) {
-        const fields = @typeInfo(@TypeOf(manifest.modules)).@"struct".fields;
+        const fields = @typeInfo(@TypeOf(manifest.modules)).@"struct".field_names;
         if (fields.len > 0) {
             text = text ++ "\nModules:\n";
-            inline for (fields) |field| {
-                const mod = @field(manifest.modules, field.name);
-                text = text ++ "  " ++ comptimePad(field.name, 22);
+            inline for (fields) |field_name| {
+                const mod = @field(manifest.modules, field_name);
+                text = text ++ "  " ++ comptimePad(field_name, 22);
                 if (@hasField(@TypeOf(mod), "root_source_file"))
                     text = text ++ mod.root_source_file;
                 text = text ++ "\n";
@@ -31,60 +53,60 @@ pub fn buildHelpText(comptime manifest: anytype) []const u8 {
 
     // Executables
     if (@hasField(@TypeOf(manifest), "executables")) {
-        const fields = @typeInfo(@TypeOf(manifest.executables)).@"struct".fields;
+        const fields = @typeInfo(@TypeOf(manifest.executables)).@"struct".field_names;
         if (fields.len > 0) {
             text = text ++ "\nExecutables:" ++ comptimePad("", 10) ++ "zig build run:<name>\n";
-            inline for (fields) |field| {
-                const exe = @field(manifest.executables, field.name);
-                text = text ++ "  " ++ comptimePad(field.name, 22) ++ describeRootModule(exe.root_module) ++ "\n";
+            inline for (fields) |field_name| {
+                const exe = @field(manifest.executables, field_name);
+                text = text ++ "  " ++ comptimePad(field_name, 22) ++ describeRootModule(exe.root_module) ++ "\n";
             }
         }
     }
 
     // Libraries
     if (@hasField(@TypeOf(manifest), "libraries")) {
-        const fields = @typeInfo(@TypeOf(manifest.libraries)).@"struct".fields;
+        const fields = @typeInfo(@TypeOf(manifest.libraries)).@"struct".field_names;
         if (fields.len > 0) {
             text = text ++ "\nLibraries:" ++ comptimePad("", 12) ++ "zig build build-lib:<name>\n";
-            inline for (fields) |field| {
-                const lib = @field(manifest.libraries, field.name);
-                text = text ++ "  " ++ comptimePad(field.name, 22) ++ describeRootModule(lib.root_module) ++ "\n";
+            inline for (fields) |field_name| {
+                const lib = @field(manifest.libraries, field_name);
+                text = text ++ "  " ++ comptimePad(field_name, 22) ++ describeRootModule(lib.root_module) ++ "\n";
             }
         }
     }
 
     // Objects
     if (@hasField(@TypeOf(manifest), "objects")) {
-        const fields = @typeInfo(@TypeOf(manifest.objects)).@"struct".fields;
+        const fields = @typeInfo(@TypeOf(manifest.objects)).@"struct".field_names;
         if (fields.len > 0) {
             text = text ++ "\nObjects:" ++ comptimePad("", 14) ++ "zig build build-obj:<name>\n";
-            inline for (fields) |field| {
-                const obj = @field(manifest.objects, field.name);
-                text = text ++ "  " ++ comptimePad(field.name, 22) ++ describeRootModule(obj.root_module) ++ "\n";
+            inline for (fields) |field_name| {
+                const obj = @field(manifest.objects, field_name);
+                text = text ++ "  " ++ comptimePad(field_name, 22) ++ describeRootModule(obj.root_module) ++ "\n";
             }
         }
     }
 
     // Tests
     if (@hasField(@TypeOf(manifest), "tests")) {
-        const fields = @typeInfo(@TypeOf(manifest.tests)).@"struct".fields;
+        const fields = @typeInfo(@TypeOf(manifest.tests)).@"struct".field_names;
         if (fields.len > 0) {
             text = text ++ "\nTests:" ++ comptimePad("", 16) ++ "zig build test:<name> | zig build test\n";
-            inline for (fields) |field| {
-                const t = @field(manifest.tests, field.name);
-                text = text ++ "  " ++ comptimePad(field.name, 22) ++ describeRootModule(t.root_module) ++ "\n";
+            inline for (fields) |field_name| {
+                const t = @field(manifest.tests, field_name);
+                text = text ++ "  " ++ comptimePad(field_name, 22) ++ describeRootModule(t.root_module) ++ "\n";
             }
         }
     }
 
     // Fmts
     if (@hasField(@TypeOf(manifest), "fmts")) {
-        const fields = @typeInfo(@TypeOf(manifest.fmts)).@"struct".fields;
+        const fields = @typeInfo(@TypeOf(manifest.fmts)).@"struct".field_names;
         if (fields.len > 0) {
             text = text ++ "\nFmts:" ++ comptimePad("", 17) ++ "zig build fmt:<name> | zig build fmt\n";
-            inline for (fields) |field| {
-                const fmt = @field(manifest.fmts, field.name);
-                text = text ++ "  " ++ comptimePad(field.name, 22);
+            inline for (fields) |field_name| {
+                const fmt = @field(manifest.fmts, field_name);
+                text = text ++ "  " ++ comptimePad(field_name, 22);
                 if (@hasField(@TypeOf(fmt), "paths"))
                     text = text ++ "paths: " ++ comptimeJoinTuple(fmt.paths);
                 text = text ++ "\n";
@@ -94,26 +116,26 @@ pub fn buildHelpText(comptime manifest: anytype) []const u8 {
 
     // Runs
     if (@hasField(@TypeOf(manifest), "runs")) {
-        const fields = @typeInfo(@TypeOf(manifest.runs)).@"struct".fields;
+        const fields = @typeInfo(@TypeOf(manifest.runs)).@"struct".field_names;
         if (fields.len > 0) {
             text = text ++ "\nRuns:" ++ comptimePad("", 17) ++ "zig build cmd:<name>\n";
-            inline for (fields) |field| {
-                const run = @field(manifest.runs, field.name);
-                text = text ++ "  " ++ comptimePad(field.name, 22) ++ describeRunCmd(run) ++ "\n";
+            inline for (fields) |field_name| {
+                const run = @field(manifest.runs, field_name);
+                text = text ++ "  " ++ comptimePad(field_name, 22) ++ describeRunCmd(run) ++ "\n";
             }
         }
     }
 
     // Options modules
     if (@hasField(@TypeOf(manifest), "options_modules")) {
-        const mod_fields = @typeInfo(@TypeOf(manifest.options_modules)).@"struct".fields;
+        const mod_fields = @typeInfo(@TypeOf(manifest.options_modules)).@"struct".field_names;
         if (mod_fields.len > 0) {
             text = text ++ "\nOptions:" ++ comptimePad("", 14) ++ "-D<module>.<option>=<value>\n";
-            inline for (mod_fields) |mod_field| {
-                const options = @field(manifest.options_modules, mod_field.name);
-                inline for (@typeInfo(@TypeOf(options)).@"struct".fields) |opt_field| {
-                    const opt = @field(options, opt_field.name);
-                    text = text ++ "  " ++ comptimePad(mod_field.name ++ "." ++ opt_field.name, 22);
+            inline for (mod_fields) |mod_field_name| {
+                const options = @field(manifest.options_modules, mod_field_name);
+                inline for (@typeInfo(@TypeOf(options)).@"struct".field_names) |opt_field_name| {
+                    const opt = @field(options, opt_field_name);
+                    text = text ++ "  " ++ comptimePad(mod_field_name ++ "." ++ opt_field_name, 22);
                     text = text ++ toComptimeString(opt.type);
                     if (@hasField(@TypeOf(opt), "default"))
                         text = text ++ " (default: " ++ describeValue(opt.default) ++ ")";
@@ -129,11 +151,11 @@ pub fn buildHelpText(comptime manifest: anytype) []const u8 {
 
     // Dependencies
     if (@hasField(@TypeOf(manifest), "dependencies")) {
-        const fields = @typeInfo(@TypeOf(manifest.dependencies)).@"struct".fields;
+        const fields = @typeInfo(@TypeOf(manifest.dependencies)).@"struct".field_names;
         if (fields.len > 0) {
             text = text ++ "\nDependencies:\n";
-            inline for (fields) |field| {
-                text = text ++ "  " ++ field.name ++ "\n";
+            inline for (fields) |field_name| {
+                text = text ++ "  " ++ field_name ++ "\n";
             }
         }
     }
@@ -143,7 +165,7 @@ pub fn buildHelpText(comptime manifest: anytype) []const u8 {
 
 pub fn comptimePad(comptime s: []const u8, comptime width: usize) []const u8 {
     if (s.len >= width) return s ++ " ";
-    const padding = [1]u8{' '} ** (width - s.len);
+    const padding: [width - s.len]u8 = @splat(' ');
     return s ++ &padding;
 }
 
@@ -162,21 +184,21 @@ fn describeRunCmd(comptime cmd: anytype) []const u8 {
 }
 
 fn comptimeJoinTuple(comptime tuple: anytype) []const u8 {
-    const fields = @typeInfo(@TypeOf(tuple)).@"struct".fields;
+    const fields = @typeInfo(@TypeOf(tuple)).@"struct".field_names;
     var result: []const u8 = "";
-    inline for (fields, 0..) |field, i| {
+    inline for (fields, 0..) |field_name, i| {
         if (i > 0) result = result ++ " ";
-        result = result ++ @field(tuple, field.name);
+        result = result ++ @field(tuple, field_name);
     }
     return result;
 }
 
 fn comptimeJoinValues(comptime tuple: anytype) []const u8 {
-    const fields = @typeInfo(@TypeOf(tuple)).@"struct".fields;
+    const fields = @typeInfo(@TypeOf(tuple)).@"struct".field_names;
     var result: []const u8 = "";
-    inline for (fields, 0..) |field, i| {
+    inline for (fields, 0..) |field_name, i| {
         if (i > 0) result = result ++ ", ";
-        result = result ++ describeValue(@field(tuple, field.name));
+        result = result ++ describeValue(@field(tuple, field_name));
     }
     return result;
 }

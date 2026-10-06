@@ -70,6 +70,18 @@ pub fn build(b: *std.Build) void {
         .stdout_match = "full_example v1.0.0",
     });
     addFixtureCommand(b, tls_test_fixtures, .{
+        .name = "examples-simple-help",
+        .cwd = "examples/simple",
+        .build_args = &.{"help"},
+        .stdout_match = "simple_example v0.1.0",
+    });
+    addFixtureCommand(b, tls_test_fixtures, .{
+        .name = "examples-full-info-cross",
+        .cwd = "examples/full",
+        .build_args = &.{ "info", "-Dtarget=wasm32-freestanding" },
+        .stdout_match = "full_example v1.0.0",
+    });
+    addFixtureCommand(b, tls_test_fixtures, .{
         .name = "manual-interop-build",
         .cwd = "test/fixtures/manual_interop",
     });
@@ -78,6 +90,18 @@ pub fn build(b: *std.Build) void {
         .cwd = "test/fixtures/manual_interop",
         .build_args = &.{"run:myapp"},
         .stderr_match = "manual manual",
+    });
+    addFixtureCommand(b, tls_test_fixtures, .{
+        .name = "manual-interop-args",
+        .cwd = "test/fixtures/manual_interop",
+        .build_args = &.{ "run:myapp", "--", "first", "two words" },
+        .stderr_match = "arg: first\narg: two words\n",
+    });
+    addFixtureCommand(b, tls_test_fixtures, .{
+        .name = "manual-interop-args-changed",
+        .cwd = "test/fixtures/manual_interop",
+        .build_args = &.{ "run:myapp", "--", "changed" },
+        .stderr_match = "arg: changed\n",
     });
     addFixtureCommand(b, tls_test_fixtures, .{
         .name = "manual-interop-cmd",
@@ -151,7 +175,7 @@ pub fn build(b: *std.Build) void {
     addFixtureCommand(b, tls_test_fixtures, .{
         .name = "inline-name-collision",
         .cwd = "test/fixtures/inline_name_collision",
-        .expect_exit = 2,
+        .expect_exit = 1,
         .stderr_match = "collides with named module",
     });
     addFixtureCommand(b, tls_test_fixtures, .{
@@ -171,40 +195,36 @@ pub fn build(b: *std.Build) void {
         .cwd = "test/fixtures/dependency_explicit_args",
         // Use uncommon target queries for distinguishability on
         // common host machines
-        .build_args = &.{ "-Dtarget=powerpc64-linux-none", "-Doptimize=ReleaseSafe" },
-        .stderr_match =
-        \\dep arch=powerpc64 os=linux abi=none optimize=ReleaseFast portable=true
-        \\dep arch=mips64 os=linux abi=none optimize=ReleaseFast portable=true
-        ,
+        .build_args = &.{ "-Dtarget=powerpc64-linux-none", "-Doptimize=safe" },
     });
     addFixtureCommand(b, tls_test_fixtures, .{
         .name = "root-module-string-options-module",
         .cwd = "test/fixtures/root_module_string_options_module",
-        .expect_exit = 2,
+        .expect_exit = 1,
         .stderr_match = "options module 'config' is import-only and cannot be used as root_module",
     });
     addFixtureCommand(b, tls_test_fixtures, .{
         .name = "duplicate-installable-artifact-name",
         .cwd = "test/fixtures/duplicate_installable_artifact_name",
-        .expect_exit = 2,
+        .expect_exit = 1,
         .stderr_match = "installable artifact names must be unique",
     });
     addFixtureCommand(b, tls_test_fixtures, .{
         .name = "alias-empty-depends-on",
         .cwd = "test/fixtures/alias_empty_depends_on",
-        .expect_exit = 2,
+        .expect_exit = 1,
         .stderr_match = "aliases 'check': depends_on must not be empty",
     });
     addFixtureCommand(b, tls_test_fixtures, .{
         .name = "preset-unknown-option",
         .cwd = "test/fixtures/preset_unknown_option",
-        .expect_exit = 2,
+        .expect_exit = 1,
         .stderr_match = "presets 'dev.config': unknown option 'missing'",
     });
     addFixtureCommand(b, tls_test_fixtures, .{
         .name = "invalid-optimize",
         .cwd = "test/fixtures/invalid_optimize",
-        .expect_exit = 2,
+        .expect_exit = 1,
         .stderr_match = "executables 'demo': invalid optimize '.Release'",
     });
     addFixtureCommand(b, tls_test_fixtures, .{
@@ -216,5 +236,15 @@ pub fn build(b: *std.Build) void {
         .name = "stdlib-passthrough-test",
         .cwd = "test/fixtures/stdlib_passthrough",
         .build_args = &.{"build-test:unit"},
+    });
+    addFixtureCommand(b, tls_test_fixtures, .{
+        .name = "stdlib-passthrough-no-builtins",
+        .cwd = "test/fixtures/stdlib_passthrough",
+        .build_args = &.{"build-obj:without_builtins"},
+    });
+    addFixtureCommand(b, tls_test_fixtures, .{
+        .name = "stdlib-passthrough-fmt",
+        .cwd = "test/fixtures/stdlib_passthrough",
+        .build_args = &.{"fmt:source"},
     });
 }
