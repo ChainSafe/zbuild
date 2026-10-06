@@ -2,7 +2,7 @@
     .name = .import_ns_dep_default,
     .version = "0.1.0",
     .fingerprint = 0xd227427fc131983d,
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .paths = .{ "build.zig", "build.zig.zon", "dep" },
     .dependencies = .{
         .zbuild = .{ .path = "../../.." },

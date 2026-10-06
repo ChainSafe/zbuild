@@ -2,7 +2,7 @@
     .name = .undeclared_external_module,
     .version = "0.1.0",
     .fingerprint = 0x616e35e85d43f0fa,
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .paths = .{ "build.zig", "build.zig.zon", "src" },
     .dependencies = .{
         .zbuild = .{ .path = "../../.." },

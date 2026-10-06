@@ -2,7 +2,7 @@
     .name = .duplicate_installable_name,
     .version = "0.1.0",
     .fingerprint = 0x4e19ae3976924b8c,
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .paths = .{ "build.zig", "build.zig.zon", "src" },
     .dependencies = .{
         .zbuild = .{ .path = "../../.." },

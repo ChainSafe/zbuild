@@ -224,7 +224,7 @@ Example:
 _ = b.addModule("shared", .{
     .root_source_file = b.path("src/shared.zig"),
     .target = b.resolveTargetQuery(.{}),
-    .optimize = .Debug,
+    .optimize = .debug,
 });
 _ = b.step("gen:prep", "manual prep step");
 ```

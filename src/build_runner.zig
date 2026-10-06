@@ -62,11 +62,11 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: 
     // target/optimize defaults. This keeps dep-specific switches intact while
     // avoiding accidental host-target builds for cross-compiled dependencies.
     if (@hasField(@TypeOf(manifest), "dependencies")) {
-        inline for (@typeInfo(@TypeOf(manifest.dependencies)).@"struct".fields) |field| {
-            const decl = @field(manifest.dependencies, field.name);
+        inline for (@typeInfo(@TypeOf(manifest.dependencies)).@"struct".field_names) |field_name| {
+            const decl = @field(manifest.dependencies, field_name);
             const dep = if (@hasField(@TypeOf(decl), "args"))
                 b.dependency(
-                    field.name,
+                    field_name,
                     dependencyArgsWithDefaults(
                         decl.args,
                         runner.target,
@@ -74,11 +74,11 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: 
                     ),
                 )
             else
-                b.dependency(field.name, .{
+                b.dependency(field_name, .{
                     .target = runner.target,
                     .optimize = runner.optimize,
                 });
-            try runner.result.dependencies.put(field.name, dep);
+            try runner.result.dependencies.put(field_name, dep);
         }
     }
 
@@ -87,71 +87,71 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: 
 
     // Phase 2: Create options modules
     if (@hasField(@TypeOf(manifest), "options_modules")) {
-        inline for (@typeInfo(@TypeOf(manifest.options_modules)).@"struct".fields) |field| {
-            try runner.createOptionsModule(manifest, field.name, @field(manifest.options_modules, field.name));
+        inline for (@typeInfo(@TypeOf(manifest.options_modules)).@"struct".field_names) |field_name| {
+            try runner.createOptionsModule(manifest, field_name, @field(manifest.options_modules, field_name));
         }
     }
 
     // Phase 3: Create named modules
     if (@hasField(@TypeOf(manifest), "modules")) {
-        inline for (@typeInfo(@TypeOf(manifest.modules)).@"struct".fields) |field| {
-            const mod = @field(manifest.modules, field.name);
-            const m = try runner.createModule(mod, field.name, &runner.result.modules);
+        inline for (@typeInfo(@TypeOf(manifest.modules)).@"struct".field_names) |field_name| {
+            const mod = @field(manifest.modules, field_name);
+            const m = try runner.createModule(mod, field_name, &runner.result.modules);
             const is_private = @hasField(@TypeOf(mod), "private") and mod.private;
             if (!is_private) {
-                try runner.registerPublicModule(field.name, m);
+                try runner.registerPublicModule(field_name, m);
             }
         }
     }
 
     // Phase 4: Create executables
     if (@hasField(@TypeOf(manifest), "executables")) {
-        inline for (@typeInfo(@TypeOf(manifest.executables)).@"struct".fields) |field| {
-            try runner.createExecutable(field.name, @field(manifest.executables, field.name));
+        inline for (@typeInfo(@TypeOf(manifest.executables)).@"struct".field_names) |field_name| {
+            try runner.createExecutable(field_name, @field(manifest.executables, field_name));
         }
     }
 
     // Phase 5: Create libraries
     if (@hasField(@TypeOf(manifest), "libraries")) {
-        inline for (@typeInfo(@TypeOf(manifest.libraries)).@"struct".fields) |field| {
-            try runner.createLibrary(field.name, @field(manifest.libraries, field.name));
+        inline for (@typeInfo(@TypeOf(manifest.libraries)).@"struct".field_names) |field_name| {
+            try runner.createLibrary(field_name, @field(manifest.libraries, field_name));
         }
     }
 
     // Phase 6: Create objects
     if (@hasField(@TypeOf(manifest), "objects")) {
-        inline for (@typeInfo(@TypeOf(manifest.objects)).@"struct".fields) |field| {
-            try runner.createObject(field.name, @field(manifest.objects, field.name));
+        inline for (@typeInfo(@TypeOf(manifest.objects)).@"struct".field_names) |field_name| {
+            try runner.createObject(field_name, @field(manifest.objects, field_name));
         }
     }
 
     // Phase 7: Create tests
     if (@hasField(@TypeOf(manifest), "tests")) {
         const tls_run_test = try runner.createTopLevelStep("test", "Run all tests");
-        inline for (@typeInfo(@TypeOf(manifest.tests)).@"struct".fields) |field| {
-            try runner.createTest(field.name, @field(manifest.tests, field.name), tls_run_test);
+        inline for (@typeInfo(@TypeOf(manifest.tests)).@"struct".field_names) |field_name| {
+            try runner.createTest(field_name, @field(manifest.tests, field_name), tls_run_test);
         }
     }
 
     // Phase 8: Create fmts
     if (@hasField(@TypeOf(manifest), "fmts")) {
         const tls_run_fmt = try runner.createTopLevelStep("fmt", "Run all fmts");
-        inline for (@typeInfo(@TypeOf(manifest.fmts)).@"struct".fields) |field| {
-            try runner.createFmt(field.name, @field(manifest.fmts, field.name), tls_run_fmt);
+        inline for (@typeInfo(@TypeOf(manifest.fmts)).@"struct".field_names) |field_name| {
+            try runner.createFmt(field_name, @field(manifest.fmts, field_name), tls_run_fmt);
         }
     }
 
     // Phase 9: Create runs
     if (@hasField(@TypeOf(manifest), "runs")) {
-        inline for (@typeInfo(@TypeOf(manifest.runs)).@"struct".fields) |field| {
-            try runner.createRun(field.name, @field(manifest.runs, field.name));
+        inline for (@typeInfo(@TypeOf(manifest.runs)).@"struct".field_names) |field_name| {
+            try runner.createRun(field_name, @field(manifest.runs, field_name));
         }
     }
 
     // Phase 10: Create aliases
     if (@hasField(@TypeOf(manifest), "aliases")) {
-        inline for (@typeInfo(@TypeOf(manifest.aliases)).@"struct".fields) |field| {
-            try runner.createAlias(field.name, @field(manifest.aliases, field.name));
+        inline for (@typeInfo(@TypeOf(manifest.aliases)).@"struct".field_names) |field_name| {
+            try runner.createAlias(field_name, @field(manifest.aliases, field_name));
         }
     }
 
@@ -161,22 +161,8 @@ pub fn configureBuild(b: *std.Build, comptime manifest: anytype, comptime opts: 
     // Phase 12: Add help step
     if (opts.help_step) |step_name| {
         const tls = try runner.createTopLevelStep(step_name, "Show project build information");
-        const help_step_impl = try b.allocator.create(std.Build.Step);
-        const S = struct {
-            fn make(step: *std.Build.Step, _: std.Build.Step.MakeOptions) anyerror!void {
-                var stdout_buffer: [256]u8 = undefined;
-                var stdout_writer = std.Io.File.stdout().writerStreaming(step.owner.graph.io, &stdout_buffer);
-                try stdout_writer.interface.writeAll(comptime help.buildHelpText(manifest));
-                try stdout_writer.interface.flush();
-            }
-        };
-        help_step_impl.* = std.Build.Step.init(.{
-            .id = .custom,
-            .name = "help",
-            .owner = b,
-            .makeFn = S.make,
-        });
-        tls.dependOn(help_step_impl);
+        const help_run = help.createStep(b, manifest);
+        tls.dependOn(&help_run.step);
     }
 
     // Phase 13: Wire depends_on
@@ -198,15 +184,15 @@ fn validateManifest(comptime manifest: anytype, comptime opts: Options) void {
     // Validate artifact sections: root_module refs, depends_on, and inline module imports
     inline for (.{ "executables", "libraries", "objects", "tests" }) |section| {
         if (@hasField(@TypeOf(manifest), section)) {
-            inline for (@typeInfo(@TypeOf(@field(manifest, section))).@"struct".fields) |field| {
-                const item = @field(@field(manifest, section), field.name);
-                validateArtifactSectionFields(section, field.name, item);
-                validateRootModuleRef(manifest, item.root_module, section, field.name);
-                validateArtifactFields(manifest, item, section, field.name);
+            inline for (@typeInfo(@TypeOf(@field(manifest, section))).@"struct".field_names) |field_name| {
+                const item = @field(@field(manifest, section), field_name);
+                validateArtifactSectionFields(section, field_name, item);
+                validateRootModuleRef(manifest, item.root_module, section, field_name);
+                validateArtifactFields(manifest, item, section, field_name);
                 if (@hasField(@TypeOf(item), "depends_on"))
-                    validateDependsOn(manifest, opts, item.depends_on, section, field.name);
+                    validateDependsOn(manifest, opts, item.depends_on, section, field_name);
                 if (isInlineRootModuleType(@TypeOf(item.root_module))) {
-                    validateModuleDefinition(manifest, item.root_module, section, field.name, true, false);
+                    validateModuleDefinition(manifest, item.root_module, section, field_name, true, false);
                 }
             }
         }
@@ -214,14 +200,14 @@ fn validateManifest(comptime manifest: anytype, comptime opts: Options) void {
 
     // Validate named module imports
     if (@hasField(@TypeOf(manifest), "modules")) {
-        inline for (@typeInfo(@TypeOf(manifest.modules)).@"struct".fields) |field| {
-            validateModuleDefinition(manifest, @field(manifest.modules, field.name), "modules", field.name, false, true);
+        inline for (@typeInfo(@TypeOf(manifest.modules)).@"struct".field_names) |field_name| {
+            validateModuleDefinition(manifest, @field(manifest.modules, field_name), "modules", field_name, false, true);
         }
     }
 
     if (@hasField(@TypeOf(manifest), "fmts")) {
-        inline for (@typeInfo(@TypeOf(manifest.fmts)).@"struct".fields) |field| {
-            validateFmtFields(field.name, @field(manifest.fmts, field.name));
+        inline for (@typeInfo(@TypeOf(manifest.fmts)).@"struct".field_names) |field_name| {
+            validateFmtFields(field_name, @field(manifest.fmts, field_name));
         }
     }
 
@@ -230,34 +216,34 @@ fn validateManifest(comptime manifest: anytype, comptime opts: Options) void {
 
     // Validate runs: depends_on refs and stdin/stdin_file exclusion
     if (@hasField(@TypeOf(manifest), "runs")) {
-        inline for (@typeInfo(@TypeOf(manifest.runs)).@"struct".fields) |field| {
-            const run = @field(manifest.runs, field.name);
+        inline for (@typeInfo(@TypeOf(manifest.runs)).@"struct".field_names) |field_name| {
+            const run = @field(manifest.runs, field_name);
             if (@hasField(@TypeOf(run), "cmd")) {
-                validateRunFields(field.name, run);
+                validateRunFields(field_name, run);
                 if (@hasField(@TypeOf(run), "depends_on"))
-                    validateDependsOn(manifest, opts, run.depends_on, "runs", field.name);
+                    validateDependsOn(manifest, opts, run.depends_on, "runs", field_name);
                 if (@hasField(@TypeOf(run), "stdin") and @hasField(@TypeOf(run), "stdin_file"))
-                    @compileError("runs '" ++ field.name ++ "': stdin and stdin_file are mutually exclusive");
+                    @compileError("runs '" ++ field_name ++ "': stdin and stdin_file are mutually exclusive");
                 if (@hasField(@TypeOf(run), "cwd"))
-                    validateLazyPathSyntax(manifest, run.cwd, "runs", field.name, "cwd");
+                    validateLazyPathSyntax(manifest, run.cwd, "runs", field_name, "cwd");
                 if (@hasField(@TypeOf(run), "stdin_file"))
-                    validateLazyPathSyntax(manifest, run.stdin_file, "runs", field.name, "stdin_file");
+                    validateLazyPathSyntax(manifest, run.stdin_file, "runs", field_name, "stdin_file");
             }
         }
     }
 
     if (@hasField(@TypeOf(manifest), "aliases")) {
-        inline for (@typeInfo(@TypeOf(manifest.aliases)).@"struct".fields) |field| {
-            const alias = @field(manifest.aliases, field.name);
-            validateAliasFields(manifest, opts, field.name, alias);
+        inline for (@typeInfo(@TypeOf(manifest.aliases)).@"struct".field_names) |field_name| {
+            const alias = @field(manifest.aliases, field_name);
+            validateAliasFields(manifest, opts, field_name, alias);
         }
     }
 }
 
 fn validateArtifactSectionFields(comptime section: []const u8, comptime name: []const u8, comptime item: anytype) void {
-    inline for (@typeInfo(@TypeOf(item)).@"struct".fields) |field| {
-        if (!isKnownArtifactField(section, field.name)) {
-            @compileError(section ++ " '" ++ name ++ "': unknown field '" ++ field.name ++ "'");
+    inline for (@typeInfo(@TypeOf(item)).@"struct".field_names) |field_name| {
+        if (!isKnownArtifactField(section, field_name)) {
+            @compileError(section ++ " '" ++ name ++ "': unknown field '" ++ field_name ++ "'");
         }
     }
 }
@@ -291,27 +277,27 @@ fn isKnownArtifactField(comptime section: []const u8, comptime field_name: []con
 }
 
 fn validateFmtFields(comptime name: []const u8, comptime fmt: anytype) void {
-    inline for (@typeInfo(@TypeOf(fmt)).@"struct".fields) |field| {
-        if (!std.mem.eql(u8, field.name, "paths") and
-            !std.mem.eql(u8, field.name, "exclude_paths") and
-            !std.mem.eql(u8, field.name, "check"))
+    inline for (@typeInfo(@TypeOf(fmt)).@"struct".field_names) |field_name| {
+        if (!std.mem.eql(u8, field_name, "paths") and
+            !std.mem.eql(u8, field_name, "exclude_paths") and
+            !std.mem.eql(u8, field_name, "check"))
         {
-            @compileError("fmts '" ++ name ++ "': unknown field '" ++ field.name ++ "'");
+            @compileError("fmts '" ++ name ++ "': unknown field '" ++ field_name ++ "'");
         }
     }
 }
 
 fn validateRunFields(comptime name: []const u8, comptime run: anytype) void {
-    inline for (@typeInfo(@TypeOf(run)).@"struct".fields) |field| {
-        if (!std.mem.eql(u8, field.name, "cmd") and
-            !std.mem.eql(u8, field.name, "cwd") and
-            !std.mem.eql(u8, field.name, "env") and
-            !std.mem.eql(u8, field.name, "inherit_stdio") and
-            !std.mem.eql(u8, field.name, "stdin") and
-            !std.mem.eql(u8, field.name, "stdin_file") and
-            !std.mem.eql(u8, field.name, "depends_on"))
+    inline for (@typeInfo(@TypeOf(run)).@"struct".field_names) |field_name| {
+        if (!std.mem.eql(u8, field_name, "cmd") and
+            !std.mem.eql(u8, field_name, "cwd") and
+            !std.mem.eql(u8, field_name, "env") and
+            !std.mem.eql(u8, field_name, "inherit_stdio") and
+            !std.mem.eql(u8, field_name, "stdin") and
+            !std.mem.eql(u8, field_name, "stdin_file") and
+            !std.mem.eql(u8, field_name, "depends_on"))
         {
-            @compileError("runs '" ++ name ++ "': unknown field '" ++ field.name ++ "'");
+            @compileError("runs '" ++ name ++ "': unknown field '" ++ field_name ++ "'");
         }
     }
 }
@@ -327,15 +313,15 @@ fn validateAliasFields(comptime manifest: anytype, comptime opts: Options, compt
         @compileError("aliases '" ++ name ++ "': missing required field 'depends_on'");
     }
 
-    inline for (alias_info.fields) |field| {
-        if (!std.mem.eql(u8, field.name, "depends_on") and
-            !std.mem.eql(u8, field.name, "description"))
+    inline for (alias_info.field_names) |field_name| {
+        if (!std.mem.eql(u8, field_name, "depends_on") and
+            !std.mem.eql(u8, field_name, "description"))
         {
-            @compileError("aliases '" ++ name ++ "': unknown field '" ++ field.name ++ "'");
+            @compileError("aliases '" ++ name ++ "': unknown field '" ++ field_name ++ "'");
         }
     }
 
-    if (@typeInfo(@TypeOf(alias.depends_on)).@"struct".fields.len == 0) {
+    if (@typeInfo(@TypeOf(alias.depends_on)).@"struct".field_names.len == 0) {
         @compileError("aliases '" ++ name ++ "': depends_on must not be empty");
     }
 
@@ -356,22 +342,22 @@ fn validateInlineModuleNames(comptime manifest: anytype) void {
         if (!@hasField(@TypeOf(manifest), section)) continue;
 
         const items = @field(manifest, section);
-        const item_fields = @typeInfo(@TypeOf(items)).@"struct".fields;
-        inline for (item_fields, 0..) |field, i| {
-            const item = @field(items, field.name);
+        const item_fields = @typeInfo(@TypeOf(items)).@"struct".field_names;
+        inline for (item_fields, 0..) |field_name, i| {
+            const item = @field(items, field_name);
             if (!isInlineRootModuleType(@TypeOf(item.root_module))) continue;
 
-            const inline_name = inlineRootModuleName(field.name, item.root_module);
+            const inline_name = inlineRootModuleName(field_name, item.root_module);
             if (hasModule(manifest, inline_name)) {
-                @compileError(section ++ " '" ++ field.name ++ "': inline root_module name '" ++ inline_name ++ "' collides with named module '" ++ inline_name ++ "'");
+                @compileError(section ++ " '" ++ field_name ++ "': inline root_module name '" ++ inline_name ++ "' collides with named module '" ++ inline_name ++ "'");
             }
 
-            inline for (item_fields[i + 1 ..]) |other_field| {
-                const other_item = @field(items, other_field.name);
+            inline for (item_fields[i + 1 ..]) |other_field_name| {
+                const other_item = @field(items, other_field_name);
                 if (!isInlineRootModuleType(@TypeOf(other_item.root_module))) continue;
-                const other_name = inlineRootModuleName(other_field.name, other_item.root_module);
+                const other_name = inlineRootModuleName(other_field_name, other_item.root_module);
                 if (comptime std.mem.eql(u8, inline_name, other_name)) {
-                    @compileError(section ++ " '" ++ field.name ++ "': inline root_module name '" ++ inline_name ++ "' collides with " ++ section ++ " '" ++ other_field.name ++ "'");
+                    @compileError(section ++ " '" ++ field_name ++ "': inline root_module name '" ++ inline_name ++ "' collides with " ++ section ++ " '" ++ other_field_name ++ "'");
                 }
             }
 
@@ -379,12 +365,12 @@ fn validateInlineModuleNames(comptime manifest: anytype) void {
                 if (comptime std.mem.eql(u8, section, other_section)) continue;
                 if (!@hasField(@TypeOf(manifest), other_section)) continue;
 
-                inline for (@typeInfo(@TypeOf(@field(manifest, other_section))).@"struct".fields) |other_field| {
-                    const other_item = @field(@field(manifest, other_section), other_field.name);
+                inline for (@typeInfo(@TypeOf(@field(manifest, other_section))).@"struct".field_names) |other_field_name| {
+                    const other_item = @field(@field(manifest, other_section), other_field_name);
                     if (!isInlineRootModuleType(@TypeOf(other_item.root_module))) continue;
-                    const other_name = inlineRootModuleName(other_field.name, other_item.root_module);
+                    const other_name = inlineRootModuleName(other_field_name, other_item.root_module);
                     if (comptime std.mem.eql(u8, inline_name, other_name)) {
-                        @compileError(section ++ " '" ++ field.name ++ "': inline root_module name '" ++ inline_name ++ "' collides with " ++ other_section ++ " '" ++ other_field.name ++ "'");
+                        @compileError(section ++ " '" ++ field_name ++ "': inline root_module name '" ++ inline_name ++ "' collides with " ++ other_section ++ " '" ++ other_field_name ++ "'");
                     }
                 }
             }
@@ -399,12 +385,12 @@ fn validateUniqueInstallableArtifactNames(comptime manifest: anytype) void {
         if (!@hasField(@TypeOf(manifest), section)) continue;
 
         const items = @field(manifest, section);
-        inline for (@typeInfo(@TypeOf(items)).@"struct".fields) |field| {
+        inline for (@typeInfo(@TypeOf(items)).@"struct".field_names) |field_name| {
             inline for (sections, 0..) |other_section, j| {
                 if (j <= i) continue;
                 if (!@hasField(@TypeOf(manifest), other_section)) continue;
-                if (@hasField(@TypeOf(@field(manifest, other_section)), field.name)) {
-                    @compileError(section ++ " '" ++ field.name ++ "': artifact name '" ++ field.name ++ "' collides with " ++ other_section ++ " '" ++ field.name ++ "'; installable artifact names must be unique because depends_on shorthand ." ++ field.name ++ " resolves to one artifact install step");
+                if (@hasField(@TypeOf(@field(manifest, other_section)), field_name)) {
+                    @compileError(section ++ " '" ++ field_name ++ "': artifact name '" ++ field_name ++ "' collides with " ++ other_section ++ " '" ++ field_name ++ "'; installable artifact names must be unique because depends_on shorthand ." ++ field_name ++ " resolves to one artifact install step");
                 }
             }
         }
@@ -459,8 +445,8 @@ fn validateDependsOn(
     comptime section: []const u8,
     comptime name: []const u8,
 ) void {
-    inline for (@typeInfo(@TypeOf(deps)).@"struct".fields) |field| {
-        const raw = @field(deps, field.name);
+    inline for (@typeInfo(@TypeOf(deps)).@"struct".field_names) |field_name| {
+        const raw = @field(deps, field_name);
         const ti = @typeInfo(@TypeOf(raw));
         const dep_name = toComptimeString(raw);
 
@@ -499,8 +485,8 @@ fn validateImports(
     comptime section: []const u8,
     comptime name: []const u8,
 ) void {
-    inline for (@typeInfo(@TypeOf(imports)).@"struct".fields) |field| {
-        const raw = @field(imports, field.name);
+    inline for (@typeInfo(@TypeOf(imports)).@"struct".field_names) |field_name| {
+        const raw = @field(imports, field_name);
         const ti = @typeInfo(@TypeOf(raw));
         const import_name = toComptimeString(raw);
 
@@ -555,20 +541,20 @@ fn validateModuleDefinition(
     if (@hasField(Mod, "optimize"))
         validateOptimize(section, name, mod.optimize);
     if (@hasField(Mod, "include_paths")) {
-        inline for (@typeInfo(@TypeOf(mod.include_paths)).@"struct".fields) |field| {
-            validateLazyPathSyntax(manifest, @field(mod.include_paths, field.name), section, name, "include_paths");
+        inline for (@typeInfo(@TypeOf(mod.include_paths)).@"struct".field_names) |field_name| {
+            validateLazyPathSyntax(manifest, @field(mod.include_paths, field_name), section, name, "include_paths");
         }
     }
 }
 
 fn validateModuleFields(comptime mod: anytype, comptime section: []const u8, comptime name: []const u8, comptime allow_name: bool, comptime allow_private: bool) void {
-    inline for (@typeInfo(@TypeOf(mod)).@"struct".fields) |field| {
-        if (!isKnownModuleField(field.name, allow_name, allow_private)) {
+    inline for (@typeInfo(@TypeOf(mod)).@"struct".field_names) |field_name| {
+        if (!isKnownModuleField(field_name, allow_name, allow_private)) {
             const context = if (allow_name)
                 section ++ " '" ++ name ++ "' root_module"
             else
                 section ++ " '" ++ name ++ "'";
-            @compileError(context ++ ": unknown field '" ++ field.name ++ "'");
+            @compileError(context ++ ": unknown field '" ++ field_name ++ "'");
         }
     }
 }
@@ -670,57 +656,57 @@ fn artifactOptionsFieldBinding(comptime section: []const u8, comptime field_name
 }
 
 fn copyModulePassthroughFields(comptime Mod: type, mod: Mod, opts: *std.Build.Module.CreateOptions) void {
-    inline for (@typeInfo(Mod).@"struct".fields) |field| {
-        if (comptime moduleCreateOptionsFieldBinding(field.name) == .passthrough) {
-            @field(opts.*, field.name) = @field(mod, field.name);
+    inline for (@typeInfo(Mod).@"struct".field_names) |field_name| {
+        if (comptime moduleCreateOptionsFieldBinding(field_name) == .passthrough) {
+            @field(opts.*, field_name) = @field(mod, field_name);
         }
     }
 }
 
 fn copyArtifactPassthroughFields(comptime section: []const u8, comptime Item: type, item: Item, opts: anytype) void {
-    inline for (@typeInfo(Item).@"struct".fields) |field| {
-        if (comptime artifactOptionsFieldBinding(section, field.name) == .passthrough) {
-            @field(opts.*, field.name) = @field(item, field.name);
+    inline for (@typeInfo(Item).@"struct".field_names) |field_name| {
+        if (comptime artifactOptionsFieldBinding(section, field_name) == .passthrough) {
+            @field(opts.*, field_name) = @field(item, field_name);
         }
     }
 }
 
 fn assertModuleCreateOptionsCoverage() void {
-    inline for (@typeInfo(std.Build.Module.CreateOptions).@"struct".fields) |field| {
-        if (moduleCreateOptionsFieldBinding(field.name) == null) {
-            @compileError("unhandled std.Build.Module.CreateOptions field '" ++ field.name ++ "'");
+    inline for (@typeInfo(std.Build.Module.CreateOptions).@"struct".field_names) |field_name| {
+        if (moduleCreateOptionsFieldBinding(field_name) == null) {
+            @compileError("unhandled std.Build.Module.CreateOptions field '" ++ field_name ++ "'");
         }
     }
 }
 
 fn assertExecutableOptionsCoverage() void {
-    inline for (@typeInfo(std.Build.ExecutableOptions).@"struct".fields) |field| {
-        if (executableOptionsFieldBinding(field.name) == null) {
-            @compileError("unhandled std.Build.ExecutableOptions field '" ++ field.name ++ "'");
+    inline for (@typeInfo(std.Build.ExecutableOptions).@"struct".field_names) |field_name| {
+        if (executableOptionsFieldBinding(field_name) == null) {
+            @compileError("unhandled std.Build.ExecutableOptions field '" ++ field_name ++ "'");
         }
     }
 }
 
 fn assertLibraryOptionsCoverage() void {
-    inline for (@typeInfo(std.Build.LibraryOptions).@"struct".fields) |field| {
-        if (libraryOptionsFieldBinding(field.name) == null) {
-            @compileError("unhandled std.Build.LibraryOptions field '" ++ field.name ++ "'");
+    inline for (@typeInfo(std.Build.LibraryOptions).@"struct".field_names) |field_name| {
+        if (libraryOptionsFieldBinding(field_name) == null) {
+            @compileError("unhandled std.Build.LibraryOptions field '" ++ field_name ++ "'");
         }
     }
 }
 
 fn assertObjectOptionsCoverage() void {
-    inline for (@typeInfo(std.Build.ObjectOptions).@"struct".fields) |field| {
-        if (objectOptionsFieldBinding(field.name) == null) {
-            @compileError("unhandled std.Build.ObjectOptions field '" ++ field.name ++ "'");
+    inline for (@typeInfo(std.Build.ObjectOptions).@"struct".field_names) |field_name| {
+        if (objectOptionsFieldBinding(field_name) == null) {
+            @compileError("unhandled std.Build.ObjectOptions field '" ++ field_name ++ "'");
         }
     }
 }
 
 fn assertTestOptionsCoverage() void {
-    inline for (@typeInfo(std.Build.TestOptions).@"struct".fields) |field| {
-        if (testOptionsFieldBinding(field.name) == null) {
-            @compileError("unhandled std.Build.TestOptions field '" ++ field.name ++ "'");
+    inline for (@typeInfo(std.Build.TestOptions).@"struct".field_names) |field_name| {
+        if (testOptionsFieldBinding(field_name) == null) {
+            @compileError("unhandled std.Build.TestOptions field '" ++ field_name ++ "'");
         }
     }
 }
@@ -758,9 +744,9 @@ fn validateArtifactFields(
 
 fn validateTestRunner(comptime manifest: anytype, comptime section: []const u8, comptime name: []const u8, comptime test_runner: anytype) void {
     const Runner = @TypeOf(test_runner);
-    inline for (@typeInfo(Runner).@"struct".fields) |field| {
-        if (!std.mem.eql(u8, field.name, "path") and !std.mem.eql(u8, field.name, "mode")) {
-            @compileError(section ++ " '" ++ name ++ "': test_runner: unknown field '" ++ field.name ++ "'");
+    inline for (@typeInfo(Runner).@"struct".field_names) |field_name| {
+        if (!std.mem.eql(u8, field_name, "path") and !std.mem.eql(u8, field_name, "mode")) {
+            @compileError(section ++ " '" ++ name ++ "': test_runner: unknown field '" ++ field_name ++ "'");
         }
     }
 
@@ -783,8 +769,8 @@ fn validateSemverString(comptime section: []const u8, comptime name: []const u8,
 }
 
 fn validateLinkLibraries(comptime manifest: anytype, comptime links: anytype, comptime section: []const u8, comptime name: []const u8) void {
-    inline for (@typeInfo(@TypeOf(links)).@"struct".fields) |field| {
-        const spec = toComptimeString(@field(links, field.name));
+    inline for (@typeInfo(@TypeOf(links)).@"struct".field_names) |field_name| {
+        const spec = toComptimeString(@field(links, field_name));
         const dep_name = comptimeBaseName(spec);
         const separator_count = comptime countSeparators(spec, ':');
 
@@ -831,15 +817,15 @@ fn validateTargetString(comptime section: []const u8, comptime name: []const u8,
 
 fn validateOptimize(comptime section: []const u8, comptime name: []const u8, comptime optimize: anytype) void {
     const T = @TypeOf(optimize);
-    const modes = std.meta.tags(std.builtin.OptimizeMode);
+    const modes = std.meta.tags(std.lang.Optimize);
 
     comptime var expected: []const u8 = "";
     inline for (modes, 0..) |mode, i| {
         expected = expected ++ (if (i == 0) "." else ", .") ++ @tagName(mode);
     }
 
-    if (@typeInfo(T) != .enum_literal and T != std.builtin.OptimizeMode) {
-        @compileError(section ++ " '" ++ name ++ "': invalid optimize type; expected one of std.builtin.OptimizeMode");
+    if (@typeInfo(T) != .enum_literal and T != std.lang.Optimize) {
+        @compileError(section ++ " '" ++ name ++ "': invalid optimize type; expected one of std.lang.Optimize");
     }
 
     const tag = @tagName(optimize);
@@ -851,8 +837,8 @@ fn validateOptimize(comptime section: []const u8, comptime name: []const u8, com
 fn validateOptionsModules(comptime manifest: anytype) void {
     if (!@hasField(@TypeOf(manifest), "options_modules")) return;
 
-    inline for (@typeInfo(@TypeOf(manifest.options_modules)).@"struct".fields) |module_field| {
-        validateOptionsModule(module_field.name, @field(manifest.options_modules, module_field.name));
+    inline for (@typeInfo(@TypeOf(manifest.options_modules)).@"struct".field_names) |module_field_name| {
+        validateOptionsModule(module_field_name, @field(manifest.options_modules, module_field_name));
     }
 }
 
@@ -863,13 +849,13 @@ fn validatePresets(comptime manifest: anytype) void {
         @compileError("presets requires options_modules");
     }
 
-    const preset_fields = @typeInfo(@TypeOf(manifest.presets)).@"struct".fields;
+    const preset_fields = @typeInfo(@TypeOf(manifest.presets)).@"struct".field_names;
     if (preset_fields.len == 0) {
         @compileError("presets must not be empty");
     }
 
-    inline for (preset_fields) |preset_field| {
-        validatePreset(manifest, preset_field.name, @field(manifest.presets, preset_field.name));
+    inline for (preset_fields) |preset_field_name| {
+        validatePreset(manifest, preset_field_name, @field(manifest.presets, preset_field_name));
     }
 }
 
@@ -880,19 +866,19 @@ fn validatePreset(comptime manifest: anytype, comptime preset_name: []const u8, 
         @compileError("presets '" ++ preset_name ++ "': expected a struct of options_modules overrides");
     }
 
-    if (preset_info.fields.len == 0) {
+    if (preset_info.field_names.len == 0) {
         @compileError("presets '" ++ preset_name ++ "': must override at least one options module");
     }
 
-    inline for (preset_info.fields) |module_field| {
-        if (!hasOptionsModule(manifest, module_field.name)) {
-            @compileError("presets '" ++ preset_name ++ "': unknown options module '" ++ module_field.name ++ "'");
+    inline for (preset_info.field_names) |module_field_name| {
+        if (!hasOptionsModule(manifest, module_field_name)) {
+            @compileError("presets '" ++ preset_name ++ "': unknown options module '" ++ module_field_name ++ "'");
         }
         validatePresetModule(
             manifest,
             preset_name,
-            module_field.name,
-            @field(preset, module_field.name),
+            module_field_name,
+            @field(preset, module_field_name),
         );
     }
 }
@@ -909,21 +895,21 @@ fn validatePresetModule(
         @compileError("presets '" ++ preset_name ++ "." ++ module_name ++ "': expected a struct of option overrides");
     }
 
-    if (overrides_info.fields.len == 0) {
+    if (overrides_info.field_names.len == 0) {
         @compileError("presets '" ++ preset_name ++ "." ++ module_name ++ "': must override at least one option");
     }
 
     const options_module = @field(manifest.options_modules, module_name);
-    inline for (overrides_info.fields) |field| {
-        if (!@hasField(@TypeOf(options_module), field.name)) {
-            @compileError("presets '" ++ preset_name ++ "." ++ module_name ++ "': unknown option '" ++ field.name ++ "'");
+    inline for (overrides_info.field_names) |field_name| {
+        if (!@hasField(@TypeOf(options_module), field_name)) {
+            @compileError("presets '" ++ preset_name ++ "." ++ module_name ++ "': unknown option '" ++ field_name ++ "'");
         }
         validatePresetOptionOverride(
             preset_name,
             module_name,
-            field.name,
-            @field(options_module, field.name),
-            @field(overrides, field.name),
+            field_name,
+            @field(options_module, field_name),
+            @field(overrides, field_name),
         );
     }
 }
@@ -972,34 +958,34 @@ fn validatePresetEnumChoice(
 }
 
 fn validateOptionsModule(comptime module_name: []const u8, comptime options: anytype) void {
-    const fields = @typeInfo(@TypeOf(options)).@"struct".fields;
+    const fields = @typeInfo(@TypeOf(options)).@"struct".field_names;
 
-    inline for (fields) |field| {
-        validateOption(module_name, field.name, @field(options, field.name));
+    inline for (fields) |field_name| {
+        validateOption(module_name, field_name, @field(options, field_name));
     }
 
-    inline for (fields) |field| {
-        const opt = @field(options, field.name);
+    inline for (fields) |field_name| {
+        const opt = @field(options, field_name);
         if (!comptime isEnumOptionType(optionTypeString(opt))) continue;
 
-        const type_name = comptime resolvedOptionTypeName(field.name, opt);
-        inline for (fields) |other_field| {
-            if (comptime std.mem.eql(u8, type_name, other_field.name)) {
-                @compileError("options_modules '" ++ module_name ++ "': generated type name '" ++ type_name ++ "' collides with option '" ++ other_field.name ++ "'");
+        const type_name = comptime resolvedOptionTypeName(field_name, opt);
+        inline for (fields) |other_field_name| {
+            if (comptime std.mem.eql(u8, type_name, other_field_name)) {
+                @compileError("options_modules '" ++ module_name ++ "': generated type name '" ++ type_name ++ "' collides with option '" ++ other_field_name ++ "'");
             }
         }
     }
 
-    inline for (fields, 0..) |field, i| {
-        const opt = @field(options, field.name);
+    inline for (fields, 0..) |field_name, i| {
+        const opt = @field(options, field_name);
         if (!comptime isEnumOptionType(optionTypeString(opt))) continue;
 
-        const type_name = comptime resolvedOptionTypeName(field.name, opt);
+        const type_name = comptime resolvedOptionTypeName(field_name, opt);
         const values = comptime enumOptionValues(opt);
-        inline for (fields[i + 1 ..]) |other_field| {
-            const other_opt = @field(options, other_field.name);
+        inline for (fields[i + 1 ..]) |other_field_name| {
+            const other_opt = @field(options, other_field_name);
             if (!comptime isEnumOptionType(optionTypeString(other_opt))) continue;
-            if (!comptime std.mem.eql(u8, type_name, resolvedOptionTypeName(other_field.name, other_opt))) continue;
+            if (!comptime std.mem.eql(u8, type_name, resolvedOptionTypeName(other_field_name, other_opt))) continue;
             if (!comptime stringSlicesEql(values, enumOptionValues(other_opt))) {
                 @compileError("options_modules '" ++ module_name ++ "': generated type name '" ++ type_name ++ "' is reused with different enum values");
             }
@@ -1009,14 +995,14 @@ fn validateOptionsModule(comptime module_name: []const u8, comptime options: any
 
 fn validateOption(comptime module_name: []const u8, comptime option_name: []const u8, comptime opt: anytype) void {
     const Opt = @TypeOf(opt);
-    inline for (@typeInfo(Opt).@"struct".fields) |field| {
-        if (!std.mem.eql(u8, field.name, "type") and
-            !std.mem.eql(u8, field.name, "default") and
-            !std.mem.eql(u8, field.name, "description") and
-            !std.mem.eql(u8, field.name, "values") and
-            !std.mem.eql(u8, field.name, "type_name"))
+    inline for (@typeInfo(Opt).@"struct".field_names) |field_name| {
+        if (!std.mem.eql(u8, field_name, "type") and
+            !std.mem.eql(u8, field_name, "default") and
+            !std.mem.eql(u8, field_name, "description") and
+            !std.mem.eql(u8, field_name, "values") and
+            !std.mem.eql(u8, field_name, "type_name"))
         {
-            @compileError("options_modules '" ++ module_name ++ "." ++ option_name ++ "': unknown field '" ++ field.name ++ "'");
+            @compileError("options_modules '" ++ module_name ++ "." ++ option_name ++ "': unknown field '" ++ field_name ++ "'");
         }
     }
 
@@ -1139,8 +1125,8 @@ fn hasAlias(comptime manifest: anytype, comptime name: []const u8) bool {
 }
 
 fn structHasFieldNamed(comptime T: type, name: []const u8) bool {
-    inline for (@typeInfo(T).@"struct".fields) |field| {
-        if (std.mem.eql(u8, field.name, name)) return true;
+    inline for (@typeInfo(T).@"struct".field_names) |field_name| {
+        if (std.mem.eql(u8, field_name, name)) return true;
     }
     return false;
 }
@@ -1331,7 +1317,7 @@ pub const BuildResult = struct {
 const BuildRunner = struct {
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     result: BuildResult,
     install_steps: std.StringHashMap(*std.Build.Step), // internal: depends_on wiring
     inline_modules: std.StringHashMap(*std.Build.Module), // internal: inline root modules only
@@ -1364,8 +1350,8 @@ const BuildRunner = struct {
         const selected = self.b.option([]const u8, "preset", "Named preset used to override options_modules defaults") orelse
             return null;
 
-        inline for (@typeInfo(@TypeOf(manifest.presets)).@"struct".fields) |field| {
-            if (std.mem.eql(u8, selected, field.name)) return selected;
+        inline for (@typeInfo(@TypeOf(manifest.presets)).@"struct".field_names) |field_name| {
+            if (std.mem.eql(u8, selected, field_name)) return selected;
         }
 
         self.logInvalidPresetName(selected, manifest);
@@ -1376,9 +1362,9 @@ const BuildRunner = struct {
         var expected: std.ArrayList(u8) = .empty;
         defer expected.deinit(self.b.allocator);
 
-        inline for (@typeInfo(@TypeOf(manifest.presets)).@"struct".fields, 0..) |field, i| {
+        inline for (@typeInfo(@TypeOf(manifest.presets)).@"struct".field_names, 0..) |field_name, i| {
             if (i > 0) expected.appendSlice(self.b.allocator, ", ") catch @panic("OOM");
-            expected.appendSlice(self.b.allocator, field.name) catch @panic("OOM");
+            expected.appendSlice(self.b.allocator, field_name) catch @panic("OOM");
         }
 
         std.log.err("invalid value for -Dpreset: '{s}' (expected one of: {s})", .{
@@ -1392,31 +1378,31 @@ const BuildRunner = struct {
         var failed = false;
 
         if (@hasField(@TypeOf(manifest), "modules")) {
-            inline for (@typeInfo(@TypeOf(manifest.modules)).@"struct".fields) |field| {
-                failed = self.validateResolvedModuleDefinition(manifest, "modules", field.name, @field(manifest.modules, field.name)) or failed;
+            inline for (@typeInfo(@TypeOf(manifest.modules)).@"struct".field_names) |field_name| {
+                failed = self.validateResolvedModuleDefinition(manifest, "modules", field_name, @field(manifest.modules, field_name)) or failed;
             }
         }
 
         inline for (.{ "executables", "libraries", "objects", "tests" }) |section| {
             if (@hasField(@TypeOf(manifest), section)) {
-                inline for (@typeInfo(@TypeOf(@field(manifest, section))).@"struct".fields) |field| {
-                    const item = @field(@field(manifest, section), field.name);
-                    failed = self.validateResolvedArtifactFields(section, field.name, item) or failed;
+                inline for (@typeInfo(@TypeOf(@field(manifest, section))).@"struct".field_names) |field_name| {
+                    const item = @field(@field(manifest, section), field_name);
+                    failed = self.validateResolvedArtifactFields(section, field_name, item) or failed;
                     if (comptime isInlineRootModuleType(@TypeOf(item.root_module))) {
-                        failed = self.validateResolvedModuleDefinition(manifest, section, field.name, item.root_module) or failed;
+                        failed = self.validateResolvedModuleDefinition(manifest, section, field_name, item.root_module) or failed;
                     }
                 }
             }
         }
 
         if (@hasField(@TypeOf(manifest), "runs")) {
-            inline for (@typeInfo(@TypeOf(manifest.runs)).@"struct".fields) |field| {
-                const run = @field(manifest.runs, field.name);
+            inline for (@typeInfo(@TypeOf(manifest.runs)).@"struct".field_names) |field_name| {
+                const run = @field(manifest.runs, field_name);
                 if (@hasField(@TypeOf(run), "cmd")) {
                     if (@hasField(@TypeOf(run), "cwd"))
-                        failed = self.validateResolvedLazyPath(run.cwd, "runs", field.name, "cwd") or failed;
+                        failed = self.validateResolvedLazyPath(run.cwd, "runs", field_name, "cwd") or failed;
                     if (@hasField(@TypeOf(run), "stdin_file"))
-                        failed = self.validateResolvedLazyPath(run.stdin_file, "runs", field.name, "stdin_file") or failed;
+                        failed = self.validateResolvedLazyPath(run.stdin_file, "runs", field_name, "stdin_file") or failed;
                 }
             }
         }
@@ -1432,31 +1418,31 @@ const BuildRunner = struct {
         defer reserved_steps.deinit();
 
         if (@hasField(@TypeOf(manifest), "modules")) {
-            inline for (@typeInfo(@TypeOf(manifest.modules)).@"struct".fields) |field| {
-                const mod = @field(manifest.modules, field.name);
+            inline for (@typeInfo(@TypeOf(manifest.modules)).@"struct".field_names) |field_name| {
+                const mod = @field(manifest.modules, field_name);
                 const is_private = @hasField(@TypeOf(mod), "private") and mod.private;
                 failed = try self.reserveOwnedImportName(
                     &reserved_imports,
-                    field.name,
+                    field_name,
                     if (is_private) "private named module" else "named module",
                 ) or failed;
                 if (!is_private) {
-                    failed = try self.ensurePublicModuleNameAvailable(field.name, "named module") or failed;
+                    failed = try self.ensurePublicModuleNameAvailable(field_name, "named module") or failed;
                 }
             }
         }
 
         if (@hasField(@TypeOf(manifest), "options_modules")) {
-            inline for (@typeInfo(@TypeOf(manifest.options_modules)).@"struct".fields) |field| {
-                failed = try self.reserveOwnedImportName(&reserved_imports, field.name, "options module") or failed;
+            inline for (@typeInfo(@TypeOf(manifest.options_modules)).@"struct".field_names) |field_name| {
+                failed = try self.reserveOwnedImportName(&reserved_imports, field_name, "options module") or failed;
             }
         }
 
         if (@hasField(@TypeOf(manifest), "dependencies")) {
-            inline for (@typeInfo(@TypeOf(manifest.dependencies)).@"struct".fields) |field| {
-                if (self.result.dependencies.get(field.name)) |dep| {
-                    if (dep.builder.modules.get(field.name) != null) {
-                        failed = try self.reserveOwnedImportName(&reserved_imports, field.name, "dependency default module") or failed;
+            inline for (@typeInfo(@TypeOf(manifest.dependencies)).@"struct".field_names) |field_name| {
+                if (self.result.dependencies.get(field_name)) |dep| {
+                    if (dep.builder.modules.get(field_name) != null) {
+                        failed = try self.reserveOwnedImportName(&reserved_imports, field_name, "dependency default module") or failed;
                     }
                 }
             }
@@ -1464,7 +1450,7 @@ const BuildRunner = struct {
 
         inline for (.{ "executables", "libraries", "objects" }) |section| {
             if (!@hasField(@TypeOf(manifest), section)) continue;
-            inline for (@typeInfo(@TypeOf(@field(manifest, section))).@"struct".fields) |field| {
+            inline for (@typeInfo(@TypeOf(@field(manifest, section))).@"struct".field_names) |field_name| {
                 const prefix = switch (section[0]) {
                     'e' => "build-exe:",
                     'l' => "build-lib:",
@@ -1473,13 +1459,13 @@ const BuildRunner = struct {
                 };
                 failed = try self.reserveTopLevelStepName(
                     &reserved_steps,
-                    self.b.fmt(prefix ++ "{s}", .{field.name}),
+                    self.b.fmt(prefix ++ "{s}", .{field_name}),
                     section ++ " install step",
                 ) or failed;
                 if (comptime std.mem.eql(u8, section, "executables")) {
                     failed = try self.reserveTopLevelStepName(
                         &reserved_steps,
-                        self.b.fmt("run:{s}", .{field.name}),
+                        self.b.fmt("run:{s}", .{field_name}),
                         "executable run step",
                     ) or failed;
                 }
@@ -1488,15 +1474,15 @@ const BuildRunner = struct {
 
         if (@hasField(@TypeOf(manifest), "tests")) {
             failed = try self.reserveTopLevelStepName(&reserved_steps, "test", "test aggregate step") or failed;
-            inline for (@typeInfo(@TypeOf(manifest.tests)).@"struct".fields) |field| {
+            inline for (@typeInfo(@TypeOf(manifest.tests)).@"struct".field_names) |field_name| {
                 failed = try self.reserveTopLevelStepName(
                     &reserved_steps,
-                    self.b.fmt("build-test:{s}", .{field.name}),
+                    self.b.fmt("build-test:{s}", .{field_name}),
                     "test install step",
                 ) or failed;
                 failed = try self.reserveTopLevelStepName(
                     &reserved_steps,
-                    self.b.fmt("test:{s}", .{field.name}),
+                    self.b.fmt("test:{s}", .{field_name}),
                     "test run step",
                 ) or failed;
             }
@@ -1504,30 +1490,30 @@ const BuildRunner = struct {
 
         if (@hasField(@TypeOf(manifest), "fmts")) {
             failed = try self.reserveTopLevelStepName(&reserved_steps, "fmt", "fmt aggregate step") or failed;
-            inline for (@typeInfo(@TypeOf(manifest.fmts)).@"struct".fields) |field| {
+            inline for (@typeInfo(@TypeOf(manifest.fmts)).@"struct".field_names) |field_name| {
                 failed = try self.reserveTopLevelStepName(
                     &reserved_steps,
-                    self.b.fmt("fmt:{s}", .{field.name}),
+                    self.b.fmt("fmt:{s}", .{field_name}),
                     "fmt step",
                 ) or failed;
             }
         }
 
         if (@hasField(@TypeOf(manifest), "runs")) {
-            inline for (@typeInfo(@TypeOf(manifest.runs)).@"struct".fields) |field| {
+            inline for (@typeInfo(@TypeOf(manifest.runs)).@"struct".field_names) |field_name| {
                 failed = try self.reserveTopLevelStepName(
                     &reserved_steps,
-                    self.b.fmt("cmd:{s}", .{field.name}),
+                    self.b.fmt("cmd:{s}", .{field_name}),
                     "run command step",
                 ) or failed;
             }
         }
 
         if (@hasField(@TypeOf(manifest), "aliases")) {
-            inline for (@typeInfo(@TypeOf(manifest.aliases)).@"struct".fields) |field| {
+            inline for (@typeInfo(@TypeOf(manifest.aliases)).@"struct".field_names) |field_name| {
                 failed = try self.reserveTopLevelStepName(
                     &reserved_steps,
-                    field.name,
+                    field_name,
                     "alias step",
                 ) or failed;
             }
@@ -1627,8 +1613,8 @@ const BuildRunner = struct {
         if (@hasField(Mod, "root_source_file"))
             failed = self.validateResolvedLazyPath(mod.root_source_file, section, name, "root_source_file") or failed;
         if (@hasField(Mod, "include_paths")) {
-            inline for (@typeInfo(@TypeOf(mod.include_paths)).@"struct".fields) |field| {
-                failed = self.validateResolvedLazyPath(@field(mod.include_paths, field.name), section, name, "include_paths") or failed;
+            inline for (@typeInfo(@TypeOf(mod.include_paths)).@"struct".field_names) |field_name| {
+                failed = self.validateResolvedLazyPath(@field(mod.include_paths, field_name), section, name, "include_paths") or failed;
             }
         }
 
@@ -1650,8 +1636,8 @@ const BuildRunner = struct {
     fn validateResolvedImports(self: *BuildRunner, comptime manifest: anytype, comptime imports: anytype, comptime section: []const u8, comptime name: []const u8) bool {
         var failed = false;
 
-        inline for (@typeInfo(@TypeOf(imports)).@"struct".fields) |field| {
-            const raw = @field(imports, field.name);
+        inline for (@typeInfo(@TypeOf(imports)).@"struct".field_names) |field_name| {
+            const raw = @field(imports, field_name);
             const import_name = comptime toComptimeString(raw);
             switch (@typeInfo(@TypeOf(raw))) {
                 .enum_literal => {
@@ -1714,8 +1700,8 @@ const BuildRunner = struct {
     fn validateResolvedLinkLibraries(self: *BuildRunner, comptime links: anytype, comptime section: []const u8, comptime name: []const u8) bool {
         var failed = false;
 
-        inline for (@typeInfo(@TypeOf(links)).@"struct".fields) |field| {
-            const spec = comptime toComptimeString(@field(links, field.name));
+        inline for (@typeInfo(@TypeOf(links)).@"struct".field_names) |field_name| {
+            const spec = comptime toComptimeString(@field(links, field_name));
             const dep_name = comptime comptimeBaseName(spec);
             const artifact_name = comptime comptimeAfterSep(spec);
             if (self.result.dependencies.get(dep_name)) |dep| {
@@ -1821,17 +1807,20 @@ const BuildRunner = struct {
             .optimize = if (@hasField(Mod, "optimize")) mod.optimize else self.optimize,
         };
         copyModulePassthroughFields(Mod, mod, &opts);
+        // Zig 0.17.0 emits the invalid flag -fno-no-builtin for false.
+        // Leaving it unspecified preserves the compiler default: builtins enabled.
+        if (opts.no_builtin == false) opts.no_builtin = null;
         const m = self.b.createModule(opts);
 
         if (@hasField(Mod, "include_paths")) {
-            inline for (@typeInfo(@TypeOf(mod.include_paths)).@"struct".fields) |field| {
-                m.addIncludePath(self.resolveLazyPath(@field(mod.include_paths, field.name)));
+            inline for (@typeInfo(@TypeOf(mod.include_paths)).@"struct".field_names) |field_name| {
+                m.addIncludePath(self.resolveLazyPath(@field(mod.include_paths, field_name)));
             }
         }
 
         if (@hasField(Mod, "link_libraries")) {
-            inline for (@typeInfo(@TypeOf(mod.link_libraries)).@"struct".fields) |field| {
-                const lib_spec = comptime toComptimeString(@field(mod.link_libraries, field.name));
+            inline for (@typeInfo(@TypeOf(mod.link_libraries)).@"struct".field_names) |field_name| {
+                const lib_spec = comptime toComptimeString(@field(mod.link_libraries, field_name));
                 const dep_name = comptime comptimeBaseName(lib_spec);
                 const artifact_name = comptime comptimeAfterSep(lib_spec);
                 if (self.result.dependencies.get(dep_name)) |dep| {
@@ -1919,7 +1908,7 @@ const BuildRunner = struct {
         });
 
         const run = self.b.addRunArtifact(artifact);
-        if (self.b.args) |args| run.addArgs(args);
+        run.addPassthruArgs();
         const tls_run = try self.createTopLevelStep(
             self.b.fmt("run:{s}", .{name}),
             self.b.fmt("Run the {s} executable", .{name}),
@@ -1967,7 +1956,9 @@ const BuildRunner = struct {
         const artifact = self.b.addObject(add_opts);
         try self.result.objects.put(name, artifact);
 
-        try self.installAndRegister("build-obj", "object", name, artifact, .{});
+        try self.installAndRegister("build-obj", "object", name, artifact, .{
+            .dest_dir = .{ .override = .lib },
+        });
     }
 
     fn createTest(self: *BuildRunner, comptime name: []const u8, comptime t: anytype, tls_run_test: *std.Build.Step) Error!void {
@@ -2020,8 +2011,8 @@ const BuildRunner = struct {
     fn createFmt(self: *BuildRunner, comptime name: []const u8, comptime fmt: anytype, tls_run_fmt: *std.Build.Step) Error!void {
         const Fmt = @TypeOf(fmt);
         const step = self.b.addFmt(.{
-            .paths = if (@hasField(Fmt, "paths")) comptime toStringSlice(fmt.paths) else &.{},
-            .exclude_paths = if (@hasField(Fmt, "exclude_paths")) comptime toStringSlice(fmt.exclude_paths) else &.{},
+            .paths = if (@hasField(Fmt, "paths")) self.b.pathList(comptime toStringSlice(fmt.paths)) else &.{},
+            .exclude_paths = if (@hasField(Fmt, "exclude_paths")) self.b.pathList(comptime toStringSlice(fmt.exclude_paths)) else &.{},
             .check = if (@hasField(Fmt, "check")) fmt.check else false,
         });
         try self.result.fmts.put(name, step);
@@ -2046,8 +2037,8 @@ const BuildRunner = struct {
                 run.setCwd(self.resolveLazyPath(cmd.cwd));
 
             if (@hasField(@TypeOf(cmd), "env")) {
-                inline for (@typeInfo(@TypeOf(cmd.env)).@"struct".fields) |field| {
-                    run.setEnvironmentVariable(field.name, @field(cmd.env, field.name));
+                inline for (@typeInfo(@TypeOf(cmd.env)).@"struct".field_names) |field_name| {
+                    run.setEnvironmentVariable(field_name, @field(cmd.env, field_name));
                 }
             }
 
@@ -2110,12 +2101,12 @@ const BuildRunner = struct {
             emitted_type_names.deinit(self.b.allocator);
         }
 
-        const fields = @typeInfo(@TypeOf(options)).@"struct".fields;
-        inline for (fields) |field| {
-            const opt = @field(options, field.name);
+        const fields = @typeInfo(@TypeOf(options)).@"struct".field_names;
+        inline for (fields) |field_name| {
+            const opt = @field(options, field_name);
             if (!comptime isEnumOptionType(optionTypeString(opt))) continue;
 
-            const type_name = try self.optionTypeNameAlloc(field.name, opt);
+            const type_name = try self.optionTypeNameAlloc(field_name, opt);
             if (stringSliceContains(emitted_type_names.items, type_name)) {
                 self.b.allocator.free(type_name);
             } else {
@@ -2125,8 +2116,8 @@ const BuildRunner = struct {
             }
         }
 
-        inline for (fields) |field| {
-            try self.emitOptionField(&source, manifest, name, field.name, @field(options, field.name));
+        inline for (fields) |field_name| {
+            try self.emitOptionField(&source, manifest, name, field_name, @field(options, field_name));
         }
 
         const write_file = self.b.addWriteFiles();
@@ -2350,9 +2341,9 @@ const BuildRunner = struct {
         const preset_name = self.active_preset orelse return null;
         if (!@hasField(@TypeOf(manifest), "presets")) return null;
 
-        inline for (@typeInfo(@TypeOf(manifest.presets)).@"struct".fields) |preset_field| {
-            if (std.mem.eql(u8, preset_name, preset_field.name)) {
-                const preset = @field(manifest.presets, preset_field.name);
+        inline for (@typeInfo(@TypeOf(manifest.presets)).@"struct".field_names) |preset_field_name| {
+            if (std.mem.eql(u8, preset_name, preset_field_name)) {
+                const preset = @field(manifest.presets, preset_field_name);
                 if (!@hasField(@TypeOf(preset), module_name)) return null;
 
                 const module_overrides = @field(preset, module_name);
@@ -2400,10 +2391,10 @@ const BuildRunner = struct {
 
     fn wireAllImports(self: *BuildRunner, comptime manifest: anytype) Error!void {
         if (@hasField(@TypeOf(manifest), "modules")) {
-            inline for (@typeInfo(@TypeOf(manifest.modules)).@"struct".fields) |field| {
-                const mod = @field(manifest.modules, field.name);
+            inline for (@typeInfo(@TypeOf(manifest.modules)).@"struct".field_names) |field_name| {
+                const mod = @field(manifest.modules, field_name);
                 if (@hasField(@TypeOf(mod), "imports")) {
-                    if (self.result.modules.get(field.name)) |m| {
+                    if (self.result.modules.get(field_name)) |m| {
                         try self.wireModuleImports(m, mod.imports);
                     }
                 }
@@ -2413,11 +2404,11 @@ const BuildRunner = struct {
         // Wire imports for inline modules in executables, libraries, objects, tests
         inline for (.{ "executables", "libraries", "objects", "tests" }) |section| {
             if (@hasField(@TypeOf(manifest), section)) {
-                inline for (@typeInfo(@TypeOf(@field(manifest, section))).@"struct".fields) |field| {
-                    const item = @field(@field(manifest, section), field.name);
+                inline for (@typeInfo(@TypeOf(@field(manifest, section))).@"struct".field_names) |field_name| {
+                    const item = @field(@field(manifest, section), field_name);
                     if (comptime isInlineRootModuleType(@TypeOf(item.root_module))) {
                         if (comptime @hasField(@TypeOf(item.root_module), "imports")) {
-                            const mod_name = inlineRootModuleName(field.name, item.root_module);
+                            const mod_name = inlineRootModuleName(field_name, item.root_module);
                             if (self.inline_modules.get(mod_name)) |m| {
                                 try self.wireModuleImports(m, item.root_module.imports);
                             }
@@ -2429,8 +2420,8 @@ const BuildRunner = struct {
     }
 
     fn wireModuleImports(self: *BuildRunner, module: *std.Build.Module, comptime imports: anytype) Error!void {
-        inline for (@typeInfo(@TypeOf(imports)).@"struct".fields) |field| {
-            const raw = @field(imports, field.name);
+        inline for (@typeInfo(@TypeOf(imports)).@"struct".field_names) |field_name| {
+            const raw = @field(imports, field_name);
             const import_name = comptime toComptimeString(raw);
             const resolved = switch (@typeInfo(@TypeOf(raw))) {
                 .enum_literal => try self.resolveOwnedImport(import_name),
@@ -2450,10 +2441,10 @@ const BuildRunner = struct {
         // Artifacts: wire install step
         inline for (.{ "executables", "libraries", "objects" }) |section| {
             if (@hasField(@TypeOf(manifest), section)) {
-                inline for (@typeInfo(@TypeOf(@field(manifest, section))).@"struct".fields) |field| {
-                    const item = @field(@field(manifest, section), field.name);
+                inline for (@typeInfo(@TypeOf(@field(manifest, section))).@"struct".field_names) |field_name| {
+                    const item = @field(@field(manifest, section), field_name);
                     if (@hasField(@TypeOf(item), "depends_on")) {
-                        if (self.install_steps.get(field.name)) |this_step| {
+                        if (self.install_steps.get(field_name)) |this_step| {
                             try self.wireDependsOnList(manifest, opts, this_step, item.depends_on);
                         }
                     }
@@ -2462,10 +2453,10 @@ const BuildRunner = struct {
         }
         // Tests: wire via test run step
         if (@hasField(@TypeOf(manifest), "tests")) {
-            inline for (@typeInfo(@TypeOf(manifest.tests)).@"struct".fields) |field| {
-                const item = @field(manifest.tests, field.name);
+            inline for (@typeInfo(@TypeOf(manifest.tests)).@"struct".field_names) |field_name| {
+                const item = @field(manifest.tests, field_name);
                 if (@hasField(@TypeOf(item), "depends_on")) {
-                    if (self.b.top_level_steps.get(self.b.fmt("test:{s}", .{field.name}))) |tls| {
+                    if (self.b.top_level_steps.get(self.b.fmt("test:{s}", .{field_name}))) |tls| {
                         try self.wireDependsOnList(manifest, opts, &tls.step, item.depends_on);
                     }
                 }
@@ -2473,10 +2464,10 @@ const BuildRunner = struct {
         }
         // Runs: wire via cmd step
         if (@hasField(@TypeOf(manifest), "runs")) {
-            inline for (@typeInfo(@TypeOf(manifest.runs)).@"struct".fields) |field| {
-                const run = @field(manifest.runs, field.name);
+            inline for (@typeInfo(@TypeOf(manifest.runs)).@"struct".field_names) |field_name| {
+                const run = @field(manifest.runs, field_name);
                 if (@hasField(@TypeOf(run), "cmd") and @hasField(@TypeOf(run), "depends_on")) {
-                    if (self.b.top_level_steps.get(self.b.fmt("cmd:{s}", .{field.name}))) |tls| {
+                    if (self.b.top_level_steps.get(self.b.fmt("cmd:{s}", .{field_name}))) |tls| {
                         try self.wireDependsOnList(manifest, opts, &tls.step, run.depends_on);
                     }
                 }
@@ -2484,9 +2475,9 @@ const BuildRunner = struct {
         }
         // Aliases: wire via exact top-level alias step
         if (@hasField(@TypeOf(manifest), "aliases")) {
-            inline for (@typeInfo(@TypeOf(manifest.aliases)).@"struct".fields) |field| {
-                const alias = @field(manifest.aliases, field.name);
-                if (self.b.top_level_steps.get(field.name)) |tls| {
+            inline for (@typeInfo(@TypeOf(manifest.aliases)).@"struct".field_names) |field_name| {
+                const alias = @field(manifest.aliases, field_name);
+                if (self.b.top_level_steps.get(field_name)) |tls| {
                     try self.wireDependsOnList(manifest, opts, &tls.step, alias.depends_on);
                 }
             }
@@ -2494,8 +2485,8 @@ const BuildRunner = struct {
     }
 
     fn wireDependsOnList(self: *BuildRunner, comptime manifest: anytype, comptime opts: Options, step: *std.Build.Step, comptime deps: anytype) Error!void {
-        inline for (@typeInfo(@TypeOf(deps)).@"struct".fields) |field| {
-            const raw = @field(deps, field.name);
+        inline for (@typeInfo(@TypeOf(deps)).@"struct".field_names) |field_name| {
+            const raw = @field(deps, field_name);
             const dep_name = comptime toComptimeString(raw);
             const dep_step = switch (@typeInfo(@TypeOf(raw))) {
                 .enum_literal => self.install_steps.get(dep_name),
@@ -2607,28 +2598,24 @@ const BuildRunner = struct {
 /// Prepares the 'target' and 'optimize' fields for forwarding
 /// from the parent's options if left empty.
 fn DependencyArgs(comptime Args: type) type {
-    const arg_fields = @typeInfo(Args).@"struct".fields;
+    const info = @typeInfo(Args).@"struct";
     const has_target = @hasField(Args, "target");
     const has_optimize = @hasField(Args, "optimize");
 
     const field_count =
-        arg_fields.len +
+        info.field_names.len +
         @intFromBool(!has_target) +
         @intFromBool(!has_optimize);
 
     var names: [field_count][]const u8 = undefined;
     var types: [field_count]type = undefined;
-    var attrs: [field_count]std.builtin.Type.StructField.Attributes = undefined;
+    var attrs: [field_count]std.lang.Type.Struct.FieldAttributes = undefined;
 
     var i: usize = 0;
-    inline for (arg_fields) |f| {
-        names[i] = f.name;
-        types[i] = f.type;
-        attrs[i] = .{
-            .@"comptime" = f.is_comptime,
-            .@"align" = f.alignment,
-            .default_value_ptr = f.default_value_ptr,
-        };
+    inline for (info.field_names, info.field_types, info.field_attrs) |name, T, attr| {
+        names[i] = name;
+        types[i] = T;
+        attrs[i] = attr;
         i += 1;
     }
 
@@ -2643,7 +2630,7 @@ fn DependencyArgs(comptime Args: type) type {
     }
     if (!has_optimize) {
         names[i] = "optimize";
-        types[i] = std.builtin.OptimizeMode;
+        types[i] = std.lang.Optimize;
         attrs[i] = .{};
     }
 
@@ -2653,18 +2640,18 @@ fn DependencyArgs(comptime Args: type) type {
 fn dependencyArgsWithDefaults(
     args: anytype,
     target_parent: std.Build.ResolvedTarget,
-    optimize_parent: std.builtin.OptimizeMode,
+    optimize_parent: std.lang.Optimize,
 ) DependencyArgs(@TypeOf(args)) {
     const Args = @TypeOf(args);
     const ForwardedArgs = DependencyArgs(Args);
     var result: ForwardedArgs = undefined;
 
-    inline for (@typeInfo(Args).@"struct".fields) |field| {
-        @field(result, field.name) = @field(args, field.name);
+    inline for (@typeInfo(Args).@"struct".field_names) |field_name| {
+        @field(result, field_name) = @field(args, field_name);
     }
 
     if (@hasField(Args, "optimize")) {
-        _ = @as(std.builtin.OptimizeMode, @field(args, "optimize"));
+        _ = @as(std.lang.Optimize, @field(args, "optimize"));
     } else {
         result.optimize = optimize_parent;
     }
@@ -2675,20 +2662,20 @@ fn dependencyArgsWithDefaults(
 }
 
 fn toStringSlice(comptime tuple: anytype) []const []const u8 {
-    const fields = @typeInfo(@TypeOf(tuple)).@"struct".fields;
+    const fields = @typeInfo(@TypeOf(tuple)).@"struct".field_names;
     var result: [fields.len][]const u8 = undefined;
-    inline for (fields, 0..) |field, i| {
-        result[i] = @field(tuple, field.name);
+    inline for (fields, 0..) |field_name, i| {
+        result[i] = @field(tuple, field_name);
     }
     const final = result;
     return &final;
 }
 
 fn toComptimeStringSlice(comptime tuple: anytype) []const []const u8 {
-    const fields = @typeInfo(@TypeOf(tuple)).@"struct".fields;
+    const fields = @typeInfo(@TypeOf(tuple)).@"struct".field_names;
     var result: [fields.len][]const u8 = undefined;
-    inline for (fields, 0..) |field, i| {
-        result[i] = toComptimeString(@field(tuple, field.name));
+    inline for (fields, 0..) |field_name, i| {
+        result[i] = toComptimeString(@field(tuple, field_name));
     }
     const final = result;
     return &final;
@@ -2900,6 +2887,19 @@ fn isFloatType(comptime t: []const u8) bool {
 
 // --- Tests ---
 
+test {
+    _ = help;
+}
+
+test "validateOptimize accepts Zig 0.17 optimization modes" {
+    comptime {
+        for (.{ .debug, .safe, .fast, .small }) |mode| {
+            validateOptimize("modules", "core", mode);
+        }
+        validateOptimize("modules", "core", @as(std.lang.Optimize, .safe));
+    }
+}
+
 test "toStringSlice" {
     const result = comptime toStringSlice(.{ "hello", "world" });
     try std.testing.expectEqual(2, result.len);
@@ -3000,7 +3000,7 @@ test "validateManifest accepts step references in depends_on" {
         .name = .myproject,
         .version = "0.1.0",
         .fingerprint = 0x1234,
-        .minimum_zig_version = "0.16.0",
+        .minimum_zig_version = "0.17.0",
         .paths = .{"."},
         .executables = .{
             .myapp = .{ .root_module = .{ .root_source_file = "src/main.zig" } },
@@ -3022,7 +3022,7 @@ test "validateManifest accepts manual build.zig string refs" {
         .name = .myproject,
         .version = "0.1.0",
         .fingerprint = 0x1234,
-        .minimum_zig_version = "0.16.0",
+        .minimum_zig_version = "0.17.0",
         .paths = .{"."},
         .modules = .{
             .core = .{
@@ -3130,7 +3130,7 @@ test "validateManifest accepts typed options modules" {
         .name = .myproject,
         .version = "0.1.0",
         .fingerprint = 0x1234,
-        .minimum_zig_version = "0.16.0",
+        .minimum_zig_version = "0.17.0",
         .paths = .{"."},
         .options_modules = .{
             .config = .{
@@ -3161,7 +3161,7 @@ test "validateManifest accepts presets for options modules" {
         .name = .myproject,
         .version = "0.1.0",
         .fingerprint = 0x1234,
-        .minimum_zig_version = "0.16.0",
+        .minimum_zig_version = "0.17.0",
         .paths = .{"."},
         .options_modules = .{
             .config = .{
@@ -3201,7 +3201,7 @@ test "validateManifest accepts minimal manifest" {
         .name = .myproject,
         .version = "0.1.0",
         .fingerprint = 0x1234,
-        .minimum_zig_version = "0.16.0",
+        .minimum_zig_version = "0.17.0",
         .paths = .{"."},
     }, .{});
 }
@@ -3211,7 +3211,7 @@ test "validateManifest accepts valid cross-references" {
         .name = .myproject,
         .version = "0.1.0",
         .fingerprint = 0x1234,
-        .minimum_zig_version = "0.16.0",
+        .minimum_zig_version = "0.17.0",
         .paths = .{"."},
         .modules = .{
             .core = .{ .root_source_file = "src/core.zig" },
@@ -3238,7 +3238,7 @@ test "validateManifest accepts unknown top-level fields" {
         .name = .myproject,
         .version = "0.1.0",
         .fingerprint = 0x1234,
-        .minimum_zig_version = "0.16.0",
+        .minimum_zig_version = "0.17.0",
         .paths = .{"."},
         .some_future_zig_field = "should be ignored",
     }, .{});
@@ -3249,7 +3249,7 @@ test "validateManifest accepts short-form runs" {
         .name = .myproject,
         .version = "0.1.0",
         .fingerprint = 0x1234,
-        .minimum_zig_version = "0.16.0",
+        .minimum_zig_version = "0.17.0",
         .paths = .{"."},
         .runs = .{
             .fmt = .{ "zig", "fmt", "src" },
@@ -3262,7 +3262,7 @@ test "validateManifest accepts long-form runs" {
         .name = .myproject,
         .version = "0.1.0",
         .fingerprint = 0x1234,
-        .minimum_zig_version = "0.16.0",
+        .minimum_zig_version = "0.17.0",
         .paths = .{"."},
         .executables = .{
             .myapp = .{ .root_module = .{ .root_source_file = "src/main.zig" } },
@@ -3283,7 +3283,7 @@ test "validateManifest accepts run and executable with same name" {
         .name = .myproject,
         .version = "0.1.0",
         .fingerprint = 0x1234,
-        .minimum_zig_version = "0.16.0",
+        .minimum_zig_version = "0.17.0",
         .paths = .{"."},
         .executables = .{
             .deploy = .{ .root_module = .{ .root_source_file = "src/main.zig" } },
